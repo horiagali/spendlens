@@ -2,6 +2,26 @@ import { Fragment, useEffect, useState } from 'react';
 import { api, BUCKET_LABEL, BUCKETS, monthLabel, moneyShort, money, type PeriodGroup, type PeriodItem, type PeriodReport } from '../api.ts';
 import type { AppData } from '../App.tsx';
 
+type SortBy = 'newest' | 'oldest' | 'biggest' | 'smallest';
+const SORTS: [SortBy, string][] = [['newest', 'Newest first'], ['oldest', 'Oldest first'], ['biggest', 'Biggest first'], ['smallest', 'Smallest first']];
+function sortItems<T extends { date: string; amount: number }>(items: T[], by: SortBy): T[] {
+  const cmp: Record<SortBy, (a: T, b: T) => number> = {
+    newest: (a, b) => b.date.localeCompare(a.date),
+    oldest: (a, b) => a.date.localeCompare(b.date),
+    biggest: (a, b) => b.amount - a.amount,
+    smallest: (a, b) => a.amount - b.amount,
+  };
+  return [...items].sort(cmp[by]);
+}
+function SortSelect({ value, onChange }: { value: SortBy; onChange: (v: SortBy) => void }) {
+  return (
+    <select className="small" value={value} onChange={(e) => onChange(e.target.value as SortBy)} aria-label="Sort transactions"
+      onClick={(e) => e.stopPropagation()}>
+      {SORTS.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+    </select>
+  );
+}
+
 /** How many months a period covers, counting partial first/last months by their share of days. */
 function monthsCovered(from: string, to: string, months: string[]): number {
   const daysIn = (m: string) => new Date(Number(m.slice(0, 4)), Number(m.slice(5, 7)), 0).getDate();
@@ -19,6 +39,7 @@ export function Summary({ summary, navigate }: AppData) {
   const [from, setFrom] = useState('');
   const [data, setData] = useState<PeriodReport | null>(null);
   const [open, setOpen] = useState<{ key: string; month: string | null } | null>(null);
+  const [lineSort, setLineSort] = useState<SortBy>('newest');
 
   useEffect(() => { api.settings().then((s) => setFrom(s.period_start ?? `${new Date().getFullYear()}-01-01`)); }, []);
   useEffect(() => {
@@ -43,7 +64,8 @@ export function Summary({ summary, navigate }: AppData) {
   const row = (label: string, byMonth: Record<string, number>, total: number, style: 'bold' | 'sub' | 'normal' = 'normal', lines?: Line[]) => {
     const isOpen = open?.key === label;
     const toggle = (month: string | null) => lines && setOpen(isOpen && open?.month === month ? null : { key: label, month });
-    const shown = isOpen && lines ? lines.filter((l) => !open!.month || l.date.startsWith(open!.month)).sort((a, b) => b.date.localeCompare(a.date)) : [];
+    const shown = isOpen && lines ? lines.filter((l) => !open!.month || l.date.startsWith(open!.month)) : [];
+    const sorted = sortItems(shown, lineSort);
     const cell = { cursor: lines ? 'pointer' : undefined };
     return (
       <Fragment key={label}>
@@ -62,13 +84,17 @@ export function Summary({ summary, navigate }: AppData) {
         {isOpen && (
           <tr>
             <td colSpan={data.months.length + 3} style={{ background: 'var(--surface-0)', padding: '6px 12px 10px 28px' }}>
-              <div className="small muted" style={{ marginBottom: 4 }}>
-                {label} · {open!.month ? monthLabel(open!.month, 'long') : 'whole period'} · {shown.length} transactions ·{' '}
-                {m(shown.reduce((sum, l) => sum + l.amount, 0))}
+              <div className="row small muted" style={{ marginBottom: 4 }}>
+                <span>
+                  {label} · {open!.month ? monthLabel(open!.month, 'long') : 'whole period'} · {shown.length} transactions ·{' '}
+                  {m(shown.reduce((sum, l) => sum + l.amount, 0))}
+                </span>
+                <div className="spacer" />
+                <SortSelect value={lineSort} onChange={setLineSort} />
               </div>
               <table>
                 <tbody>
-                  {shown.map((l) => (
+                  {sorted.map((l) => (
                     <tr key={l.id}>
                       <td className="small muted" style={{ width: 90 }}>{l.date}</td>
                       <td className="small">{l.merchant}{l.oneOff && <span className="pill" style={{ marginLeft: 6 }}>one-off</span>}
@@ -160,6 +186,7 @@ function Groups({ groups, total, m, perMonth, open }: {
   groups: PeriodGroup[]; total: number; m: (c: number) => string; perMonth: (c: number) => number; open: (g: PeriodGroup) => void;
 }) {
   const [expanded, setExpanded] = useState<string | null>(null);
+  const [sortBy, setSortBy] = useState<SortBy>('biggest');
   const [showAll, setShowAll] = useState(false);
   const max = Math.max(...groups.map((g) => g.total), 1);
   return (
@@ -168,7 +195,8 @@ function Groups({ groups, total, m, perMonth, open }: {
         {groups.map((g) => {
           const key = String(g.categoryId);
           const isOpen = expanded === key;
-          const items = showAll ? g.items : g.items.slice(0, 10);
+          const all = sortItems(g.items, sortBy);
+          const items = showAll ? all : all.slice(0, 10);
           return (
             <Fragment key={key}>
               <tr style={{ cursor: 'pointer' }} onClick={() => { setExpanded(isOpen ? null : key); setShowAll(false); }}>
@@ -185,6 +213,7 @@ function Groups({ groups, total, m, perMonth, open }: {
               {isOpen && (
                 <tr>
                   <td colSpan={6} style={{ background: 'var(--surface-0)', padding: '6px 12px 10px 28px' }}>
+                    <div className="row" style={{ marginBottom: 4 }}><div className="spacer" /><SortSelect value={sortBy} onChange={setSortBy} /></div>
                     <table>
                       <tbody>
                         {items.map((i) => (
