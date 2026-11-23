@@ -1,0 +1,27 @@
+{
+  "name": "spendlens",
+  "private": true,
+  "type": "module",
+  "description": "Local-only personal spending tracker for Revolut",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "start": "node --disable-warning=ExperimentalWarning server/src/main.ts",
+    "dev": "node --disable-warning=ExperimentalWarning --watch server/src/main.ts",
+    "dev:web": "npm --prefix web run dev",
+    "build": "npm --prefix web run build",
+    "import": "node --disable-warning=ExperimentalWarning server/src/cli.ts import",
+    "bank": "node --disable-warning=ExperimentalWarning server/src/cli.ts bank",
+    "test": "node --disable-warning=ExperimentalWarning --test 'server/test/**/*.test.ts'",
+    "typecheck": "tsc -p server && npm --prefix web run typecheck",
+    "prepare": "git config core.hooksPath .githooks || true",
+    "demo": "mkdir -p data && node scripts/demo-statement.ts > data/demo-statement.csv && echo \"Wrote data/demo-statement.csv, import it from the app\"",
+    "setup": "npm install && npm --prefix web install && npm run build"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.6",
+    "typescript": "^7.0.2"
+  },
+  "license": "MIT"
+}

@@ -1,0 +1,12 @@
+#!/bin/sh
+# Refuse to commit personal data or credentials. Bypass only if you really know what you are doing.
+bad=$(git diff --cached --name-only --diff-filter=AM | grep -E '(^|/)data/|\.(db|db-wal|db-shm|pem|key|xlsx)$|(^|/)\.env|enablebanking\.json|\.csv$' | grep -v '^server/test/fixtures/')
+if [ -n "$bad" ]; then
+  echo "✗ pre-commit: refusing to commit files that may contain personal financial data or secrets:" >&2
+  echo "$bad" | sed 's/^/    /' >&2
+  exit 1
+fi
+if git diff --cached -U0 | grep -E '^\+' | grep -qE 'BEGIN (RSA |EC )?PRIVATE KEY|\b[A-Z]{2}[0-9]{2}[A-Z0-9]{4}[0-9]{7}([A-Z0-9]?){0,16}\b'; then
+  echo "✗ pre-commit: staged changes contain what looks like a private key or IBAN." >&2
+  exit 1
+fi

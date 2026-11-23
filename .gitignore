@@ -1,0 +1,9 @@
+node_modules/
+web/dist/
+# Personal financial data and credentials: never commit
+data/
+*.csv
+*.xlsx
+*.pem
+.env
+!server/test/fixtures/*.csv

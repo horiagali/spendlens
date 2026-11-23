@@ -1,0 +1,79 @@
+import assert from 'node:assert/strict';
+import { createVerify, generateKeyPairSync } from 'node:crypto';
+import { test } from 'node:test';
+import { openDb } from '../src/db.ts';
+import { makeJwt, mapEbTransaction } from '../src/importers/enableBanking.ts';
+import { parseRevolutCsv } from '../src/importers/revolutCsv.ts';
+import { importTransactions } from '../src/store.ts';
+
+const NEW_STYLE = `Type,Product,Started Date,Completed Date,Description,Amount,Fee,Currency,State,Balance
+Card Payment,Current,2026-03-02 9:05:01,2026-03-03 10:00:00,Lidl,-23.10,0.00,EUR,COMPLETED,900.00
+Transfer,Current,2026-03-03 08:00:00,2026-03-03 08:00:00,To EUR Japan trip,-100.00,0.00,EUR,COMPLETED,800.00
+Transfer,Current,2026-03-04 08:00:00,2026-03-04 08:00:00,To Ron Weasley,-40.00,0.00,EUR,COMPLETED,760.00
+Interest,Deposit,2026-03-05 02:00:00,2026-03-05 02:00:00,Interest earned - Savings,0.05,0.01,EUR,COMPLETED,5000.04
+Transfer,Current,2026-03-06 08:00:00,2026-03-06 08:00:00,Revolut Vault | To EUR RoundUps,-0.70,0.00,EUR,COMPLETED,759.30
+`;
+
+test('newer CSV style: mixed-case types, unpadded hours, named vaults', () => {
+  const rows = parseRevolutCsv(NEW_STYLE);
+  assert.equal(rows[0]!.type, 'CARD_PAYMENT');
+  assert.equal(rows[0]!.startedAt, '2026-03-02 09:05:01');
+  const db = openDb(':memory:');
+  importTransactions(db, rows);
+  const kind = (d: string) => (db.prepare('SELECT kind FROM transactions WHERE description = ?').get(d) as { kind: string }).kind;
+  assert.equal(kind('Lidl'), 'spend');
+  assert.equal(kind('To EUR Japan trip'), 'internal');
+  assert.equal(kind('To Ron Weasley'), 'spend'); // a person, not a vault
+  assert.equal(kind('Interest earned - Savings'), 'internal');
+  assert.equal(kind('Revolut Vault | To EUR RoundUps'), 'internal');
+});
+
+test('Enable Banking JWT is a valid RS256 token', () => {
+  const { privateKey, publicKey } = generateKeyPairSync('rsa', { modulusLength: 2048 });
+  const jwt = makeJwt('app-123', privateKey.export({ type: 'pkcs8', format: 'pem' }) as string);
+  const [h, p, sig] = jwt.split('.');
+  assert.deepEqual(JSON.parse(Buffer.from(h!, 'base64url').toString()), { typ: 'JWT', alg: 'RS256', kid: 'app-123' });
+  const claims = JSON.parse(Buffer.from(p!, 'base64url').toString());
+  assert.equal(claims.aud, 'api.enablebanking.com');
+  assert.ok(claims.exp - claims.iat <= 86400);
+  assert.ok(createVerify('RSA-SHA256').update(`${h}.${p}`).verify(publicKey, Buffer.from(sig!, 'base64url')));
+});
+
+const ACCOUNT = { uid: 'acc-1', currency: 'EUR' };
+
+test('Enable Banking transactions map onto CSV-style descriptions', () => {
+  const card = mapEbTransaction({
+    entry_reference: 'r1', transaction_amount: { amount: '23.10', currency: 'EUR' }, credit_debit_indicator: 'DBIT',
+    status: 'BOOK', booking_date: '2026-03-02', creditor: { name: 'Lidl' }, merchant_category_code: '5411',
+  }, ACCOUNT);
+  assert.equal(card.amount, -2310);
+  assert.equal(card.description, 'Lidl');
+  assert.equal(card.type, 'CARD_PAYMENT');
+  const incoming = mapEbTransaction({
+    entry_reference: 'r2', transaction_amount: { amount: '30.00', currency: 'EUR' }, credit_debit_indicator: 'CRDT',
+    status: 'BOOK', booking_date: '2026-03-04', debtor: { name: 'JOHN DOE' }, bank_transaction_code: { code: 'TRANSFER' },
+  }, ACCOUNT);
+  assert.equal(incoming.description, 'Transfer from JOHN DOE');
+  const vault = mapEbTransaction({
+    entry_reference: 'r3', transaction_amount: { amount: '0.70', currency: 'EUR' }, credit_debit_indicator: 'DBIT',
+    status: 'BOOK', booking_date: '2026-03-06', creditor: { name: 'Jane Me' }, bank_transaction_code: { code: 'TRANSFER' },
+    remittance_information: ['To pocket EUR Savings'],
+  }, ACCOUNT);
+  assert.equal(vault.description, 'To pocket EUR Savings');
+});
+
+test('the same payment from CSV and bank sync is counted once', () => {
+  const db = openDb(':memory:');
+  importTransactions(db, parseRevolutCsv(NEW_STYLE));
+  const eb = mapEbTransaction({
+    entry_reference: 'r1', transaction_amount: { amount: '23.10', currency: 'EUR' }, credit_debit_indicator: 'DBIT',
+    status: 'BOOK', booking_date: '2026-03-03', transaction_date: '2026-03-02', creditor: { name: 'LIDL NL' },
+  }, ACCOUNT);
+  const r1 = importTransactions(db, [eb]);
+  assert.deepEqual([r1.added, r1.unchanged], [0, 1]);
+  const r2 = importTransactions(db, [eb]); // re-sync: alias is remembered
+  assert.deepEqual([r2.added, r2.unchanged], [0, 1]);
+  const newer = { ...eb, id: 'eb_other', startedAt: '2026-03-20 00:00:00' };
+  assert.equal(importTransactions(db, [newer]).added, 1);
+  assert.equal((db.prepare('SELECT COUNT(*) AS n FROM transactions').get() as { n: number }).n, 6);
+});
