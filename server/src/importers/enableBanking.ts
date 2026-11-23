@@ -133,13 +133,21 @@ export function mapEbTransaction(t: any, account: { uid: string; currency?: stri
   const amount = t.credit_debit_indicator === 'DBIT' ? -Math.abs(amountAbs) : Math.abs(amountAbs);
   const code: string = (t.bank_transaction_code?.code ?? '').toUpperCase();
   const remittance = (t.remittance_information ?? []).join(' ').trim();
-  const counterparty: string | undefined = amount < 0 ? t.creditor?.name : t.debtor?.name;
   const isCard = !!t.merchant_category_code || code.includes('CARD');
+  // On card payments the merchant is the creditor even when money comes back (refunds name only you as debtor).
+  let counterparty: string | undefined = isCard ? t.creditor?.name || remittance.replace(/^Refund from\s+/i, '') || undefined
+    : amount < 0 ? t.creditor?.name : t.debtor?.name;
+  // Card merchant names are cut at ~25 characters; "Https:" is all that is left of "https://www.ns.nl/".
+  if (counterparty && /^https?:\/*$/i.test(counterparty) && remittance) counterparty = remittance;
   const type = code || (isCard ? 'CARD_PAYMENT' : 'TRANSFER');
   let description: string;
   // Vault/pocket moves are named in the remittance text ("To pocket EUR Savings"), not the counterparty.
   if (/pocket|vault|round[ -]?up|savings|exchanged/i.test(remittance)) description = remittance;
-  else if (type === 'TRANSFER' && counterparty) description = amount < 0 ? `To ${counterparty}` : `Transfer from ${counterparty}`;
+  else if (type === 'TRANSFER' && counterparty && isPersonToPerson(t, amount, counterparty)) {
+    const person = paymentRequester(counterparty) ?? counterparty;
+    description = amount < 0 ? `To ${person}` : `Transfer from ${person}`;
+  }
+  // Bank transfers to companies (rent, insurance, webshops) read like card payments: just the payee.
   else description = counterparty || remittance || type;
   const date: string = t.transaction_date ?? t.booking_date ?? t.value_date;
   const ref: string = t.entry_reference ?? t.transaction_id
@@ -153,6 +161,7 @@ export function mapEbTransaction(t: any, account: { uid: string; currency?: stri
     startedAt: `${date} 00:00:00`,
     completedAt: t.booking_date ? `${t.booking_date} 00:00:00` : null,
     description,
+    reference: remittance,
     amount,
     fee: 0,
     currency: t.transaction_amount.currency,
@@ -160,4 +169,19 @@ export function mapEbTransaction(t: any, account: { uid: string; currency?: stri
     balance: t.balance_after_transaction?.balance_amount ? parseCents(String(t.balance_after_transaction.balance_amount.amount)) : null,
     raw: { ...t, remittance },
   };
+}
+
+/**
+ * Revolut fills in your own name on the other side of transfers to and from people
+ * (debtor on payments you send, creditor on ones you receive), but not on bank transfers to companies.
+ */
+function isPersonToPerson(t: any, amount: number, counterparty: string): boolean {
+  const ownSide: string | undefined = amount < 0 ? t.debtor?.name : t.creditor?.name;
+  return !!ownSide || paymentRequester(counterparty) !== null;
+}
+
+/** "Jane Doe via Tikkie", "Hr J Doe via ING Betaalverzoek": a friend's payment request -> the friend. */
+function paymentRequester(name: string): string | null {
+  const m = /^(?:(?:hr|mw|dhr|mevr)\.?\s+)?(.+?) via (?:tikkie|ing betaalverzoek)$/i.exec(name.trim());
+  return m && !/betaalverzoek/i.test(m[1]!) ? m[1]! : null;
 }

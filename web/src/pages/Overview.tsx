@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { api, money, monthLabel, moneyShort, type PeriodSummary } from '../api.ts';
+import { api, BUCKET_LABEL, BUCKETS, money, monthLabel, moneyShort, type Bucket, type PeriodSummary } from '../api.ts';
 import type { AppData } from '../App.tsx';
 import { CategoryHeatmap, MonthBars } from '../components/charts.tsx';
 
@@ -14,9 +14,9 @@ export function Overview({ summary, categories, navigate }: AppData) {
   const sel = all.find((m) => m.month === selected) ?? all.at(-1);
   const prev = sel ? all[all.indexOf(sel) - 1] : undefined;
 
-  const catList = useMemo(() => [
-    ...categories.filter((c) => !c.isIncome).map((c) => ({ id: String(c.id), name: c.name })),
-    { id: 'uncategorized', name: 'Uncategorized' },
+  const catList = useMemo<CatItem[]>(() => [
+    ...categories.filter((c) => !c.isIncome).map((c) => ({ id: String(c.id), name: c.name, bucket: c.bucket })),
+    { id: 'uncategorized', name: 'Uncategorized', bucket: 'lifestyle' as const },
   ], [categories]);
 
   if (!sel) return null;
@@ -42,9 +42,11 @@ export function Overview({ summary, categories, navigate }: AppData) {
       </div>
 
       <div className="tiles">
-        <Tile label={`Spent · ${monthLabel(sel.month, 'long')}`} value={money(sel.spending, currency)} delta={delta(sel.spending, prev?.spending)}
+        <Tile label={`Day-to-day · ${monthLabel(sel.month, 'long')}`} value={money(sel.byBucket.lifestyle, currency)}
+          delta={delta(sel.byBucket.lifestyle, prev?.byBucket.lifestyle)}
           onClick={() => navigate(`transactions?month=${sel.month}&kind=spend`)} />
-        <Tile label="Of which one-off" value={money(sel.oneOff, currency)} delta={`${money(sel.spending - sel.oneOff, currency)} recurring`} />
+        <Tile label="Fixed costs & set apart" value={money(sel.byBucket.fixed + sel.byBucket.separate, currency)}
+          delta={`${money(sel.byBucket.fixed, currency)} fixed · ${money(sel.byBucket.separate, currency)} set apart`} />
         <Tile label="Income" value={money(sel.income, currency)} delta={delta(sel.income, prev?.income)}
           onClick={() => navigate(`transactions?month=${sel.month}&kind=income`)} />
         <Tile label="Left over" value={money(sel.income - sel.spending, currency)}
@@ -55,16 +57,21 @@ export function Overview({ summary, categories, navigate }: AppData) {
         <h2>Income vs spending</h2>
         <MonthBars months={months} currency={currency} selected={sel.month} onSelect={setSelected} series={[
           { key: 'income', label: 'Income', color: 'var(--series-3)', value: (m) => m.income },
-          { key: 'spending', label: 'Spending', color: 'var(--series-1)', value: (m) => m.spending },
+          { key: 'spending', label: 'All spending', color: 'var(--series-1)', value: (m) => m.spending },
         ]} />
       </div>
 
       <div className="card">
-        <h2>Spending: recurring vs one-off purchases</h2>
-        <p className="muted small" style={{ marginTop: -6 }}>Mark big purchases (a console, a laptop) as one-off on the Transactions page to see if your everyday spending is really growing.</p>
+        <h2>Where spending goes</h2>
+        <p className="muted small" style={{ marginTop: -6 }}>
+          Day-to-day spending is what changes with your lifestyle. Rent and bills are fixed costs; tuition is set apart.
+          Mark big purchases (a laptop, a holiday) as one-off on the Transactions page to see if your everyday spending is really growing.
+        </p>
         <MonthBars months={months} currency={currency} stacked selected={sel.month} onSelect={setSelected} series={[
-          { key: 'recurring', label: 'Recurring', color: 'var(--series-1)', value: (m) => m.spending - m.oneOff },
-          { key: 'oneoff', label: 'One-off', color: 'var(--series-2)', value: (m) => m.oneOff },
+          { key: 'recurring', label: 'Day-to-day', color: 'var(--series-1)', value: (m) => m.byBucket.lifestyle - m.lifestyleOneOff },
+          { key: 'oneoff', label: 'One-off', color: 'var(--series-2)', value: (m) => m.lifestyleOneOff },
+          { key: 'fixed', label: 'Fixed costs', color: 'var(--series-4)', value: (m) => m.byBucket.fixed },
+          { key: 'separate', label: 'Set apart', color: 'var(--series-5)', value: (m) => m.byBucket.separate },
         ]} />
       </div>
 
@@ -89,7 +96,9 @@ function Tile({ label, value, delta, onClick }: { label: string; value: string; 
 }
 
 /** Before/after comparison around a date the user picks (e.g. starting a job). */
-function Compare({ currency, catList }: { currency: string; catList: { id: string; name: string }[] }) {
+interface CatItem { id: string; name: string; bucket: Bucket }
+
+function Compare({ currency, catList }: { currency: string; catList: CatItem[] }) {
   const [cutoff, setCutoff] = useState('');
   const [data, setData] = useState<{ before: PeriodSummary; after: PeriodSummary } | null>(null);
 
@@ -105,15 +114,19 @@ function Compare({ currency, catList }: { currency: string; catList: { id: strin
     .filter((r) => r.before || r.after)
     .sort((a, b) => (b.after - b.before) - (a.after - a.before)) : [];
 
-  const line = (label: string, b: number, a: number, bold = false) => (
-    <tr style={{ fontWeight: bold ? 600 : undefined }}>
-      <td>{label}</td>
+  const line = (label: string, b: number, a: number, style: 'bold' | 'sub' | 'normal' = 'normal', key = label) => (
+    <tr key={key} style={{ fontWeight: style === 'bold' ? 600 : undefined }}>
+      <td style={{ paddingLeft: style === 'sub' ? 20 : undefined }}>{label}</td>
       <td className="num">{moneyShort(b, currency)}</td>
       <td className="num">{moneyShort(a, currency)}</td>
       <td className="num">{a - b >= 0 ? '+' : ''}{moneyShort(a - b, currency)}</td>
-      <td className="num muted">{b ? `${a - b >= 0 ? '+' : ''}${(((a - b) / b) * 100).toFixed(0)}%` : '—'}</td>
+      <td className="num muted">{b ? `${a - b >= 0 ? '+' : ''}${(((a - b) / Math.abs(b)) * 100).toFixed(0)}%` : a ? 'new' : '—'}</td>
     </tr>
   );
+  const group = (bucket: Bucket) => [
+    line(BUCKET_LABEL[bucket], data!.before.avgByBucket[bucket], data!.after.avgByBucket[bucket], 'bold'),
+    ...rows.filter((r) => r.bucket === bucket).map((r) => line(r.name, r.before, r.after, 'sub', r.id)),
+  ];
 
   return (
     <div className="card">
@@ -128,17 +141,15 @@ function Compare({ currency, catList }: { currency: string; catList: { id: strin
           <table>
             <thead><tr><th>Per month</th><th className="num">Before</th><th className="num">After</th><th className="num">Change</th><th className="num"></th></tr></thead>
             <tbody>
-              {line('Income', data.before.avgIncome, data.after.avgIncome, true)}
-              {line('Spending', data.before.avgSpending, data.after.avgSpending, true)}
-              {line('Spending excl. one-offs', data.before.avgRecurringSpending, data.after.avgRecurringSpending, true)}
-              {rows.map((r) => <tr key={r.id}><td style={{ paddingLeft: 20 }}>{r.name}</td>
-                <td className="num">{moneyShort(r.before, currency)}</td><td className="num">{moneyShort(r.after, currency)}</td>
-                <td className="num">{r.after - r.before >= 0 ? '+' : ''}{moneyShort(r.after - r.before, currency)}</td>
-                <td className="num muted">{r.before ? `${r.after - r.before >= 0 ? '+' : ''}${(((r.after - r.before) / r.before) * 100).toFixed(0)}%` : 'new'}</td></tr>)}
+              {line('Income', data.before.avgIncome, data.after.avgIncome, 'bold')}
+              {line('All spending', data.before.avgSpending, data.after.avgSpending, 'bold')}
+              {line('Day-to-day excl. one-offs', data.before.avgRecurringLifestyle, data.after.avgRecurringLifestyle, 'bold')}
+              {BUCKETS.flatMap(group)}
             </tbody>
           </table>
           <p className="small" style={{ marginTop: 12 }}>
-            Share of income spent: <b>{pct(data.before.avgSpending, data.before.avgIncome)}</b> before → <b>{pct(data.after.avgSpending, data.after.avgIncome)}</b> after.
+            Share of income spent: <b>{pct(data.before.avgSpending, data.before.avgIncome)}</b> before → <b>{pct(data.after.avgSpending, data.after.avgIncome)}</b> after
+            (day-to-day only: <b>{pct(data.before.avgByBucket.lifestyle, data.before.avgIncome)}</b> → <b>{pct(data.after.avgByBucket.lifestyle, data.after.avgIncome)}</b>).
           </p>
         </>
       )}

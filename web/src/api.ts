@@ -1,24 +1,31 @@
 export type Kind = 'spend' | 'income' | 'reimbursement' | 'internal' | 'excluded';
 export const KINDS: Kind[] = ['spend', 'income', 'reimbursement', 'internal', 'excluded'];
 
-export interface Category { id: number; name: string; color: string | null; isIncome: number; }
+export type Bucket = 'lifestyle' | 'fixed' | 'separate';
+export const BUCKETS: Bucket[] = ['lifestyle', 'fixed', 'separate'];
+export const BUCKET_LABEL: Record<Bucket, string> = { lifestyle: 'Day-to-day', fixed: 'Fixed costs', separate: 'Set apart' };
+export interface Category { id: number; name: string; color: string | null; isIncome: number; bucket: Bucket; }
 export interface Txn {
-  id: string; source: string; account: string; type: string; startedAt: string; date: string; description: string;
+  id: string; source: string; account: string; type: string; startedAt: string; date: string; description: string; reference: string;
   merchant: string; merchantKey: string; counterparty: string | null; amount: number; fee: number; currency: string;
   state: string; kind: Kind; kindSource: string; categoryId: number | null; categorySource: string | null;
   ruleId: number | null; oneOff: number; note: string | null; reimbursed: number; allocated: number;
 }
 export interface MonthReport {
   month: string; income: number; spending: number; oneOff: number; savedInternally: number;
+  byBucket: Record<Bucket, number>; lifestyleOneOff: number;
   byCategory: Record<string, number>; incomeByCategory: Record<string, number>;
 }
 export interface Summary {
   months: MonthReport[]; baseCurrency: string;
   counts: { total: number; uncategorized: number | null; firstDate: string | null; lastDate: string | null };
 }
-export interface PeriodSummary { months: number; avgIncome: number; avgSpending: number; avgRecurringSpending: number; avgByCategory: Record<string, number>; }
+export interface PeriodSummary {
+  months: number; avgIncome: number; avgSpending: number; avgRecurringSpending: number; avgByCategory: Record<string, number>;
+  avgByBucket: Record<Bucket, number>; avgRecurringLifestyle: number;
+}
 export interface InboxItem { merchantKey: string; merchant: string; kind: Kind; count: number; total: number; lastDate: string; sampleDescription: string; }
-export type ConditionField = 'merchant' | 'merchantKey' | 'description' | 'counterparty' | 'type' | 'account' | 'state' | 'currency' | 'direction' | 'amount';
+export type ConditionField = 'merchant' | 'merchantKey' | 'description' | 'reference' | 'counterparty' | 'type' | 'account' | 'state' | 'currency' | 'direction' | 'amount';
 export interface Condition { field: ConditionField; op: string; value: string | number; }
 export interface Rule {
   id: number; name: string; priority: number; enabled: boolean; conditions: Condition[];
@@ -53,8 +60,8 @@ export const api = {
   inbox: () => req<InboxItem[]>('GET', '/api/inbox'),
   label: (b: { merchantKey: string; merchant: string; categoryId?: number | null; kind?: Kind | null }) => req('POST', '/api/inbox/label', b),
   categories: () => req<Category[]>('GET', '/api/categories'),
-  addCategory: (b: { name: string; isIncome: boolean }) => req<{ id: number }>('POST', '/api/categories', b),
-  updateCategory: (id: number, b: Partial<{ name: string; isIncome: boolean }>) => req('PATCH', `/api/categories/${id}`, b),
+  addCategory: (b: { name: string; isIncome: boolean; bucket?: Bucket }) => req<{ id: number }>('POST', '/api/categories', b),
+  updateCategory: (id: number, b: Partial<{ name: string; isIncome: boolean; bucket: Bucket }>) => req('PATCH', `/api/categories/${id}`, b),
   deleteCategory: (id: number) => req('DELETE', `/api/categories/${id}`),
   rules: () => req<Rule[]>('GET', '/api/rules'),
   previewRule: (conditions: Condition[]) => req<{ count: number; sample: Txn[] }>('POST', '/api/rules/preview', { conditions }),

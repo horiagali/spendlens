@@ -8,6 +8,13 @@ export type Kind =
 
 export const KINDS: Kind[] = ['spend', 'income', 'reimbursement', 'internal', 'excluded'];
 
+/**
+ * Which part of spending a category belongs to. Fixed costs (rent, insurance) and set-apart costs
+ * (tuition) are reported separately so "am I spending more?" is about day-to-day spending.
+ */
+export type Bucket = 'lifestyle' | 'fixed' | 'separate';
+export const BUCKETS: Bucket[] = ['lifestyle', 'fixed', 'separate'];
+
 /** A transaction as produced by an importer, before classification. */
 export interface ImportedTxn {
   /** Stable dedup key, unique per source. */
@@ -18,6 +25,8 @@ export interface ImportedTxn {
   startedAt: string; // ISO-ish "YYYY-MM-DD HH:MM:SS"
   completedAt: string | null;
   description: string;
+  /** Payment reference / memo, e.g. "For Albert Heijn" on a split-bill payment. Empty when the source has none. */
+  reference?: string;
   amount: number; // cents, signed, excluding fee
   fee: number; // cents, positive = charged to you
   currency: string;

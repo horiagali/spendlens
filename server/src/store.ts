@@ -1,6 +1,6 @@
 import type { DB } from './db.ts';
 import { tx } from './db.ts';
-import { extractCounterparty, normalizeMerchant } from './merchant.ts';
+import { extractCounterparty, normalizeMerchant, splitMerchant } from './merchant.ts';
 import { reclassifyAll } from './rules.ts';
 import type { ImportedTxn } from './types.ts';
 
@@ -29,9 +29,9 @@ export function importTransactions(db: DB, txns: ImportedTxn[], label: string | 
   const result: ImportResult = { added: 0, updated: 0, unchanged: 0 };
   const find = db.prepare('SELECT state, completed_at, balance FROM transactions WHERE id = ?');
   const insert = db.prepare(`INSERT INTO transactions
-    (id, source, account, type, started_at, completed_at, date, description, merchant, merchant_key, counterparty,
+    (id, source, account, type, started_at, completed_at, date, description, reference, merchant, merchant_key, counterparty,
      amount, fee, currency, state, balance, raw, kind)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'spend')`);
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'spend')`);
   const refresh = db.prepare('UPDATE transactions SET state = ?, completed_at = ?, balance = ?, raw = ? WHERE id = ?');
   const findAlias = db.prepare('SELECT txn_id FROM txn_aliases WHERE alias_id = ?');
   const addAlias = db.prepare('INSERT INTO txn_aliases (alias_id, txn_id) VALUES (?, ?)');
@@ -54,8 +54,11 @@ export function importTransactions(db: DB, txns: ImportedTxn[], label: string | 
         continue;
       }
       const counterparty = extractCounterparty(t.type, t.description);
-      const m = counterparty ? { name: counterparty, key: counterparty.toLowerCase() } : normalizeMerchant(t.description);
-      insert.run(t.id, t.source, t.account, t.type, t.startedAt, t.completedAt, t.startedAt.slice(0, 10), t.description,
+      // A split-bill payment to/from a friend is really about the merchant named in the memo.
+      const forMerchant = counterparty && t.reference ? splitMerchant(t.reference) : null;
+      const m = forMerchant ? normalizeMerchant(forMerchant)
+        : counterparty ? { name: counterparty, key: counterparty.toLowerCase() } : normalizeMerchant(t.description);
+      insert.run(t.id, t.source, t.account, t.type, t.startedAt, t.completedAt, t.startedAt.slice(0, 10), t.description, t.reference ?? '',
         m.name, m.key, counterparty, t.amount, t.fee, t.currency, t.state, t.balance, JSON.stringify(t.raw));
       result.added++;
     }

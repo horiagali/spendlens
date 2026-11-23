@@ -3,7 +3,7 @@ import { api, KINDS, money, type Condition, type ConditionField, type Kind, type
 import type { AppData } from '../App.tsx';
 import { CategorySelect } from '../components/CategorySelect.tsx';
 
-const FIELDS: ConditionField[] = ['merchant', 'description', 'counterparty', 'type', 'account', 'direction', 'amount', 'state', 'currency', 'merchantKey'];
+const FIELDS: ConditionField[] = ['merchant', 'description', 'reference', 'counterparty', 'type', 'account', 'direction', 'amount', 'state', 'currency', 'merchantKey'];
 const TEXT_OPS = ['contains', 'equals', 'startsWith', 'regex'];
 const NUM_OPS = ['gt', 'gte', 'lt', 'lte', 'equals'];
 const OP_LABEL: Record<string, string> = { contains: 'contains', equals: 'is', startsWith: 'starts with', regex: 'matches regex', gt: '>', gte: '≥', lt: '<', lte: '≤' };

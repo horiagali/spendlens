@@ -74,7 +74,11 @@ Every transaction gets a **kind**:
 | `internal` | savings, vaults, round-ups, exchanges, transfers between your own accounts | nothing |
 | `excluded` | failed/reverted payments, or anything you choose to ignore | nothing |
 
-**Rules** (on the *Rules* page) set kinds and categories. They run in priority order; built-in rules handle Revolut's noise and can be edited or disabled. Tip: add a rule *counterparty is "Your Name" → internal* for transfers between your own accounts at other banks.
+Spending categories also belong to a **group**: *day-to-day* (the default), *fixed costs* (rent, insurance, phone) or *set apart* (tuition). The Overview and the before/after comparison show the groups separately, so "am I spending more?" is answered about day-to-day spending rather than drowned out by rent.
+
+Split bills paid through Revolut carry a memo like "For Albert Heijn To Alex" (your share) or "For Albert Heijn From Alex" (being paid back). spendlens files both under the merchant in the memo, so they land in its category, with paybacks counting as refunds.
+
+**Rules** (on the *Rules* page) set kinds and categories. New databases start with labels for common Dutch/EU chains (supermarkets, NS/OVpay, airlines, subscriptions…), so the Label inbox starts with the long tail. Rules can also match the payment **reference** (memo). They run in priority order; built-in rules handle Revolut's noise and can be edited or disabled. Tip: add a rule *counterparty is "Your Name" → internal* for transfers between your own accounts at other banks.
 
 ## Your data
 

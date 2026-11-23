@@ -1,11 +1,14 @@
 import type { DB } from './db.ts';
 import { getSetting } from './db.ts';
+import type { Bucket } from './types.ts';
 
 export interface MonthReport {
   month: string; // YYYY-MM
   income: number; // cents
   spending: number; // cents, net of refunds and reimbursements, including fees
   oneOff: number; // part of spending flagged as one-off purchases
+  byBucket: Record<Bucket, number>; // spending split into day-to-day, fixed costs and set-apart costs
+  lifestyleOneOff: number; // one-offs within the lifestyle bucket
   savedInternally: number; // net moved from the current account into savings/vaults
   byCategory: Record<string, number>; // category id (or "uncategorized") -> spending cents
   incomeByCategory: Record<string, number>;
@@ -21,12 +24,16 @@ export function monthlyReport(db: DB): MonthReport[] {
   const months = new Map<string, MonthReport>();
   const get = (m: string) => {
     let r = months.get(m);
-    if (!r) months.set(m, (r = { month: m, income: 0, spending: 0, oneOff: 0, savedInternally: 0, byCategory: {}, incomeByCategory: {} }));
+    if (!r) months.set(m, (r = {
+      month: m, income: 0, spending: 0, oneOff: 0, byBucket: { lifestyle: 0, fixed: 0, separate: 0 }, lifestyleOneOff: 0,
+      savedInternally: 0, byCategory: {}, incomeByCategory: {},
+    }));
     return r;
   };
   const add = (rec: Record<string, number>, key: string, v: number) => { rec[key] = (rec[key] ?? 0) + v; };
 
   const rows = db.prepare(`SELECT t.id, substr(t.date, 1, 7) AS month, t.amount, t.fee, t.kind, t.category_id, t.one_off, t.account,
+      COALESCE((SELECT c.bucket FROM categories c WHERE c.id = t.category_id), 'lifestyle') AS bucket,
       COALESCE((SELECT SUM(r.amount) FROM reimbursements r WHERE r.expense_id = t.id), 0) AS reimbursed,
       COALESCE((SELECT SUM(r.amount) FROM reimbursements r WHERE r.incoming_id = t.id), 0) AS allocated
     FROM transactions t WHERE t.currency = ?`).all(currency) as Record<string, any>[];
@@ -39,7 +46,9 @@ export function monthlyReport(db: DB): MonthReport[] {
         const cost = -t.amount + t.fee - t.reimbursed;
         m.spending += cost;
         add(m.byCategory, cat, cost);
+        m.byBucket[t.bucket as Bucket] += cost;
         if (t.one_off) m.oneOff += cost;
+        if (t.one_off && t.bucket === 'lifestyle') m.lifestyleOneOff += cost;
         break;
       }
       case 'income':
@@ -64,6 +73,8 @@ export interface PeriodSummary {
   avgIncome: number;
   avgSpending: number;
   avgRecurringSpending: number; // excluding one-offs
+  avgByBucket: Record<Bucket, number>;
+  avgRecurringLifestyle: number; // day-to-day spending excluding one-offs: the "am I spending more?" number
   avgByCategory: Record<string, number>;
 }
 
@@ -83,6 +94,12 @@ export function compareAround(db: DB, cutoff: string): { before: PeriodSummary; 
       avgIncome: ms.reduce((s, m) => s + m.income, 0) / n,
       avgSpending: ms.reduce((s, m) => s + m.spending, 0) / n,
       avgRecurringSpending: ms.reduce((s, m) => s + m.spending - m.oneOff, 0) / n,
+      avgByBucket: {
+        lifestyle: ms.reduce((s, m) => s + m.byBucket.lifestyle, 0) / n,
+        fixed: ms.reduce((s, m) => s + m.byBucket.fixed, 0) / n,
+        separate: ms.reduce((s, m) => s + m.byBucket.separate, 0) / n,
+      },
+      avgRecurringLifestyle: ms.reduce((s, m) => s + m.byBucket.lifestyle - m.lifestyleOneOff, 0) / n,
       avgByCategory,
     };
   };

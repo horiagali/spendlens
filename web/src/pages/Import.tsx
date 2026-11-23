@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { api } from '../api.ts';
+import { api, BUCKET_LABEL, BUCKETS, type Bucket } from '../api.ts';
 import type { AppData } from '../App.tsx';
 
 export function ImportPage({ refresh, categories, navigate }: AppData) {
@@ -63,6 +63,10 @@ export function ImportPage({ refresh, categories, navigate }: AppData) {
 
       <div className="card">
         <h2>Categories</h2>
+        <p className="muted small" style={{ marginTop: -6 }}>
+          Spending categories belong to a group. <b>Fixed costs</b> (rent, insurance) and <b>set apart</b> costs (tuition) are shown
+          separately on the Overview, so the before/after comparison is about your day-to-day spending.
+        </p>
         <div className="row" style={{ marginBottom: 10 }}>
           <input type="text" placeholder="New category" value={newCat} onChange={(e) => setNewCat(e.target.value)} />
           <button disabled={!newCat} onClick={async () => { await api.addCategory({ name: newCat, isIncome: false }); setNewCat(''); refresh(); }}>Add spending category</button>
@@ -76,6 +80,14 @@ export function ImportPage({ refresh, categories, navigate }: AppData) {
                   <input type="text" defaultValue={c.name} onBlur={async (e) => { if (e.target.value && e.target.value !== c.name) { await api.updateCategory(c.id, { name: e.target.value }); refresh(); } }} />
                 </td>
                 <td className="muted small">{c.isIncome ? 'income' : 'spending'}</td>
+                <td>
+                  {!c.isIncome && (
+                    <select value={c.bucket} aria-label={`Group for ${c.name}`}
+                      onChange={async (e) => { await api.updateCategory(c.id, { bucket: e.target.value as Bucket }); refresh(); }}>
+                      {BUCKETS.map((b) => <option key={b} value={b}>{BUCKET_LABEL[b]}</option>)}
+                    </select>
+                  )}
+                </td>
                 <td><button className="ghost small" onClick={async () => { if (confirm(`Delete "${c.name}"? Its transactions become uncategorized.`)) { await api.deleteCategory(c.id); refresh(); } }}>Delete</button></td>
               </tr>
             ))}

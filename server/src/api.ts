@@ -8,9 +8,9 @@ import { loadRules, matchesRule, reclassifyAll, upsertMerchantRule } from './rul
 import { acceptAllSuggestions, dismissSuggestion, linkReimbursement, suggestSplits, unlinkReimbursement } from './splits.ts';
 import { importTransactions } from './store.ts';
 import { syncEnableBanking, syncStatus } from './sync.ts';
-import { KINDS, type Kind } from './types.ts';
+import { BUCKETS, KINDS, type Bucket, type Kind } from './types.ts';
 
-const TXN_COLUMNS = `t.id, t.source, t.account, t.type, t.started_at AS startedAt, t.date, t.description, t.merchant,
+const TXN_COLUMNS = `t.id, t.source, t.account, t.type, t.started_at AS startedAt, t.date, t.description, t.reference, t.merchant,
   t.merchant_key AS merchantKey, t.counterparty, t.amount, t.fee, t.currency, t.state, t.kind, t.kind_source AS kindSource,
   t.category_id AS categoryId, t.category_source AS categorySource, t.rule_id AS ruleId, t.one_off AS oneOff, t.note,
   COALESCE((SELECT SUM(r.amount) FROM reimbursements r WHERE r.expense_id = t.id), 0) AS reimbursed,
@@ -20,8 +20,12 @@ function assertKind(k: unknown): asserts k is Kind {
   if (!KINDS.includes(k as Kind)) throw new HttpError(400, `Invalid kind: ${String(k)}`);
 }
 
+function assertBucket(b: unknown): asserts b is Bucket {
+  if (!BUCKETS.includes(b as Bucket)) throw new HttpError(400, `Invalid bucket: ${String(b)}`);
+}
+
 function ruleSubjects(db: DB) {
-  return db.prepare(`SELECT id, date, description, merchant, merchant_key AS merchantKey, counterparty, type, account, state, currency, amount
+  return db.prepare(`SELECT id, date, description, reference, merchant, merchant_key AS merchantKey, counterparty, type, account, state, currency, amount
     FROM transactions ORDER BY date DESC`).all() as any[];
 }
 
@@ -53,7 +57,7 @@ export function buildApi(db: DB): Router {
     if (p.get('category') === 'none') where.push('t.category_id IS NULL');
     else if (p.get('category')) { where.push('t.category_id = ?'); args.push(Number(p.get('category'))); }
     if (p.get('merchantKey')) { where.push('t.merchant_key = ?'); args.push(p.get('merchantKey')!); }
-    if (p.get('q')) { where.push('(t.description LIKE ? OR t.merchant LIKE ? OR t.note LIKE ?)'); const q = `%${p.get('q')}%`; args.push(q, q, q); }
+    if (p.get('q')) { where.push('(t.description LIKE ? OR t.reference LIKE ? OR t.merchant LIKE ? OR t.note LIKE ?)'); const q = `%${p.get('q')}%`; args.push(q, q, q, q); }
     const sql = `FROM transactions t ${where.length ? 'WHERE ' + where.join(' AND ') : ''}`;
     const limit = Math.min(Number(p.get('limit') ?? 200), 2000);
     const offset = Number(p.get('offset') ?? 0);
@@ -96,17 +100,21 @@ export function buildApi(db: DB): Router {
   });
 
   // --- categories ---
-  r.get('/api/categories', () => db.prepare('SELECT id, name, color, is_income AS isIncome FROM categories ORDER BY is_income, name').all());
+  r.get('/api/categories', () => db.prepare('SELECT id, name, color, is_income AS isIncome, bucket FROM categories ORDER BY is_income, name').all());
   r.post('/api/categories', async ({ body }) => {
     const b = await body();
     if (!b.name) throw new HttpError(400, 'name required');
-    const res = db.prepare('INSERT INTO categories (name, color, is_income) VALUES (?, ?, ?)').run(b.name, b.color ?? null, b.isIncome ? 1 : 0);
+    if (b.bucket != null) assertBucket(b.bucket);
+    const res = db.prepare('INSERT INTO categories (name, color, is_income, bucket) VALUES (?, ?, ?, ?)')
+      .run(b.name, b.color ?? null, b.isIncome ? 1 : 0, b.bucket ?? 'lifestyle');
     return { id: Number(res.lastInsertRowid) };
   });
   r.patch('/api/categories/:id', async ({ params, body }) => {
     const b = await body();
-    db.prepare('UPDATE categories SET name = COALESCE(?, name), color = COALESCE(?, color), is_income = COALESCE(?, is_income) WHERE id = ?')
-      .run(b.name ?? null, b.color ?? null, b.isIncome == null ? null : b.isIncome ? 1 : 0, Number(params.id));
+    if (b.bucket != null) assertBucket(b.bucket);
+    db.prepare(`UPDATE categories SET name = COALESCE(?, name), color = COALESCE(?, color), is_income = COALESCE(?, is_income),
+        bucket = COALESCE(?, bucket) WHERE id = ?`)
+      .run(b.name ?? null, b.color ?? null, b.isIncome == null ? null : b.isIncome ? 1 : 0, b.bucket ?? null, Number(params.id));
   });
   r.delete('/api/categories/:id', ({ params }) => {
     db.prepare('DELETE FROM categories WHERE id = ?').run(Number(params.id));

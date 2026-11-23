@@ -2,7 +2,7 @@ import type { DB } from './db.ts';
 import type { Kind } from './types.ts';
 
 export type ConditionField =
-  | 'merchant' | 'merchantKey' | 'description' | 'counterparty'
+  | 'merchant' | 'merchantKey' | 'description' | 'reference' | 'counterparty'
   | 'type' | 'account' | 'state' | 'currency' | 'direction' | 'amount';
 export type ConditionOp = 'equals' | 'contains' | 'startsWith' | 'regex' | 'lt' | 'lte' | 'gt' | 'gte';
 
@@ -31,6 +31,7 @@ export interface RuleSubject {
   merchant: string;
   merchantKey: string;
   description: string;
+  reference: string;
   counterparty: string | null;
   type: string;
   account: string;
@@ -39,7 +40,7 @@ export interface RuleSubject {
   amount: number;
 }
 
-const REFUND_TYPES = /REFUND|CASHBACK|REWARD/;
+const REFUND_TYPES = /REFUND|CHARGEBACK|CASHBACK|REWARD/;
 
 export function defaultKind(t: RuleSubject): Kind {
   if (t.amount === 0) return 'excluded';
@@ -143,10 +144,13 @@ export function loadRules(db: DB): Rule[] {
  */
 export function reclassifyAll(db: DB): { changed: number } {
   const rules = loadRules(db);
+  const incomeCategories = new Set(
+    (db.prepare('SELECT id FROM categories WHERE is_income = 1').all() as { id: number }[]).map((c) => c.id),
+  );
   const reimbursed = new Set(
     (db.prepare('SELECT DISTINCT incoming_id FROM reimbursements').all() as { incoming_id: string }[]).map((r) => r.incoming_id),
   );
-  const rows = db.prepare(`SELECT id, merchant, merchant_key, description, counterparty, type, account, state, currency, amount,
+  const rows = db.prepare(`SELECT id, merchant, merchant_key, description, reference, counterparty, type, account, state, currency, amount,
       kind, kind_source, category_id, category_source, rule_id FROM transactions`).all() as Record<string, any>[];
   const update = db.prepare(`UPDATE transactions SET kind = ?, kind_source = ?, category_id = ?, category_source = ?, rule_id = ? WHERE id = ?`);
   let changed = 0;
@@ -154,11 +158,13 @@ export function reclassifyAll(db: DB): { changed: number } {
   try {
     for (const r of rows) {
       const c = classify({
-        merchant: r.merchant, merchantKey: r.merchant_key, description: r.description, counterparty: r.counterparty,
+        merchant: r.merchant, merchantKey: r.merchant_key, description: r.description, reference: r.reference, counterparty: r.counterparty,
         type: r.type, account: r.account, state: r.state, currency: r.currency, amount: r.amount,
       }, rules);
       let kind: Kind = c.kind;
       let kindSource = c.kindFromRule ? 'rule' : 'auto';
+      // Money back from a merchant you labeled with a spending category is a refund, not income.
+      if (!c.kindFromRule && kind === 'income' && c.categoryId !== null && !incomeCategories.has(c.categoryId)) kind = 'spend';
       if (r.kind_source === 'manual') { kind = r.kind; kindSource = 'manual'; }
       else if (reimbursed.has(r.id) && kind === 'income') { kind = 'reimbursement'; kindSource = 'auto'; }
       let categoryId = c.categoryId;

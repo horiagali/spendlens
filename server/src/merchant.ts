@@ -15,7 +15,17 @@ export function extractCounterparty(type: string, description: string): string |
   return null;
 }
 
-const PROCESSOR_PREFIX = /^(?:sumup|zettle|sq|izettle|paypal|ccv|mollie|stripe|pp|sp)\s*[*_]\s*/i;
+const PROCESSOR_PREFIX = /^(?:(?:sumup|zettle|sq|izettle|paypal|ccv|bck|buc|buckaroo|pay\.nl|mollie|stripe|pp|sp)\s*[*_]+\s*|(?:bck|ccv)\s+)/i;
+
+/**
+ * The merchant named in a split-bill memo: "For Albert Heijn To JOHN DOE" (you paying your share)
+ * or "For Albert Heijn From JOHN DOE" (being paid back) -> "Albert Heijn".
+ */
+export function splitMerchant(reference: string): string | null {
+  // Greedy: the person is after the *last* To/From ("For Too Good To Go To JOHN DOE").
+  const m = /^For\s+(?:To\s+)?(.+)\s+(?:To|From)\s+\S/.exec(reference.trim());
+  return m?.[1] ?? null;
+}
 
 /**
  * Reduce a raw description to a merchant name that stays the same across visits:
@@ -23,7 +33,7 @@ const PROCESSOR_PREFIX = /^(?:sumup|zettle|sq|izettle|paypal|ccv|mollie|stripe|p
  * "Uber *Trip Help.Uber.Com" -> "Uber Trip".
  */
 export function normalizeMerchant(description: string): { name: string; key: string } {
-  let s = description.trim().replace(PROCESSOR_PREFIX, '');
+  let s = description.trim().replace(PROCESSOR_PREFIX, '').replace(/^https?:\/*(?:www\.)?([^/\s]*)\/?$/i, '$1');
   // "Uber *Eats" -> "Uber Eats", but "Amzn Mktp *2K4L1" -> "Amzn Mktp" (ids after * vary per purchase)
   s = s.replace(/\s*\*\s*(\S*).*$/, (_, w: string) => (/^\p{L}{3,}$/u.test(w) ? ` ${w}` : ''));
   s = s.replace(/\s+(?:[A-Z]{2}\s*)?#?\d[\d\s-]*$/i, ''); // trailing store numbers

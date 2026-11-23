@@ -31,6 +31,7 @@ export function parseRevolutCsv(text: string): ImportedTxn[] {
       startedAt: normalizeDateTime(r['Started Date']!),
       completedAt: r['Completed Date'] ? normalizeDateTime(r['Completed Date']) : null,
       description: r['Description'] ?? '',
+      reference: r['Reference'] ?? '',
       amount: parseCents(r['Amount'] ?? '0'),
       fee: parseCents(r['Fee'] ?? '0'),
       currency: r['Currency'] ?? 'EUR',

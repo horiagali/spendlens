@@ -4,6 +4,7 @@ import { test } from 'node:test';
 import { openDb } from '../src/db.ts';
 import { makeJwt, mapEbTransaction } from '../src/importers/enableBanking.ts';
 import { parseRevolutCsv } from '../src/importers/revolutCsv.ts';
+import { monthlyReport } from '../src/reports.ts';
 import { importTransactions } from '../src/store.ts';
 
 const NEW_STYLE = `Type,Product,Started Date,Completed Date,Description,Amount,Fee,Currency,State,Balance
@@ -51,9 +52,28 @@ test('Enable Banking transactions map onto CSV-style descriptions', () => {
   assert.equal(card.type, 'CARD_PAYMENT');
   const incoming = mapEbTransaction({
     entry_reference: 'r2', transaction_amount: { amount: '30.00', currency: 'EUR' }, credit_debit_indicator: 'CRDT',
-    status: 'BOOK', booking_date: '2026-03-04', debtor: { name: 'JOHN DOE' }, bank_transaction_code: { code: 'TRANSFER' },
+    status: 'BOOK', booking_date: '2026-03-04', debtor: { name: 'JOHN DOE' }, creditor: { name: 'Jane Me' },
+    bank_transaction_code: { code: 'TRANSFER' }, remittance_information: ['For Albert Heijn From JOHN DOE'],
   }, ACCOUNT);
   assert.equal(incoming.description, 'Transfer from JOHN DOE');
+  assert.equal(incoming.reference, 'For Albert Heijn From JOHN DOE');
+  const company = mapEbTransaction({
+    entry_reference: 'r4', transaction_amount: { amount: '672.12', currency: 'EUR' }, credit_debit_indicator: 'DBIT',
+    status: 'BOOK', booking_date: '2026-03-05', creditor: { name: 'Stichting DUWO' }, bank_transaction_code: { code: 'TRANSFER' },
+    remittance_information: ['7499473965 0020008700372340 To Stichting DUWO'],
+  }, ACCOUNT);
+  assert.equal(company.description, 'Stichting DUWO'); // not a person, so no counterparty
+  const request = mapEbTransaction({
+    entry_reference: 'r5', transaction_amount: { amount: '12.50', currency: 'EUR' }, credit_debit_indicator: 'DBIT',
+    status: 'BOOK', booking_date: '2026-03-05', creditor: { name: 'Hr J Doe via ING Betaalverzoek' }, bank_transaction_code: { code: 'TRANSFER' },
+  }, ACCOUNT);
+  assert.equal(request.description, 'To J Doe');
+  const refund = mapEbTransaction({
+    entry_reference: 'r6', transaction_amount: { amount: '2.87', currency: 'EUR' }, credit_debit_indicator: 'CRDT',
+    status: 'BOOK', booking_date: '2026-03-05', debtor: { name: 'JANE ME' }, bank_transaction_code: { code: 'CARD_REFUND' },
+    remittance_information: ['Refund from Nlovb85yya6kded5ve'],
+  }, ACCOUNT);
+  assert.equal(refund.description, 'Nlovb85yya6kded5ve');
   const vault = mapEbTransaction({
     entry_reference: 'r3', transaction_amount: { amount: '0.70', currency: 'EUR' }, credit_debit_indicator: 'DBIT',
     status: 'BOOK', booking_date: '2026-03-06', creditor: { name: 'Jane Me' }, bank_transaction_code: { code: 'TRANSFER' },
@@ -76,4 +96,28 @@ test('the same payment from CSV and bank sync is counted once', () => {
   const newer = { ...eb, id: 'eb_other', startedAt: '2026-03-20 00:00:00' };
   assert.equal(importTransactions(db, [newer]).added, 1);
   assert.equal((db.prepare('SELECT COUNT(*) AS n FROM transactions').get() as { n: number }).n, 6);
+});
+
+test('split-bill memos, company transfers and buckets', () => {
+  const db = openDb(':memory:');
+  const tx = (ref: string, amount: string, dbit: boolean, extra: Record<string, unknown>) => mapEbTransaction({
+    entry_reference: ref, transaction_amount: { amount, currency: 'EUR' }, credit_debit_indicator: dbit ? 'DBIT' : 'CRDT',
+    status: 'BOOK', booking_date: '2026-03-10', bank_transaction_code: { code: 'TRANSFER' }, ...extra,
+  }, ACCOUNT);
+  importTransactions(db, [
+    tx('a', '20.00', true, { creditor: { name: 'John Doe' }, debtor: { name: 'Jane Me' }, remittance_information: ['For Albert Heijn To JOHN DOE'] }),
+    tx('b', '5.00', false, { debtor: { name: 'John Doe' }, creditor: { name: 'Jane Me' }, remittance_information: ['For Albert Heijn From JOHN DOE'] }),
+    tx('c', '672.12', true, { creditor: { name: 'Stichting DUWO' }, remittance_information: ['7499473965 To Stichting DUWO'] }),
+    tx('d', '2530.00', true, { creditor: { name: 'TU DELFT' }, remittance_information: ['VFS277923 To Tu Delft'] }),
+    tx('e', '3.00', true, { creditor: { name: 'John Doe' }, debtor: { name: 'Jane Me' }, remittance_information: ['For SPAR University To JOHN DOE'] }),
+  ]);
+  const row = (ref: string) => ({ ...db.prepare(`SELECT t.kind, t.merchant, t.counterparty, c.name AS category FROM transactions t
+    LEFT JOIN categories c ON c.id = t.category_id WHERE t.raw LIKE ?`).get(`%"entry_reference":"${ref}"%`) as Record<string, any> });
+  assert.deepEqual(row('a'), { kind: 'spend', merchant: 'Albert Heijn', counterparty: 'John Doe', category: 'Groceries' });
+  assert.deepEqual(row('b'), { kind: 'spend', merchant: 'Albert Heijn', counterparty: 'John Doe', category: 'Groceries' }); // a refund
+  assert.deepEqual(row('c'), { kind: 'spend', merchant: 'Stichting DUWO', counterparty: null, category: 'Rent' });
+  assert.equal(row('d').category, 'Tuition');
+  assert.equal(row('e').category, 'Groceries'); // not tuition
+  const [m] = monthlyReport(db);
+  assert.deepEqual(m!.byBucket, { lifestyle: 2000 - 500 + 300, fixed: 67212, separate: 253000 });
 });

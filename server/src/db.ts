@@ -1,8 +1,10 @@
 import { DatabaseSync } from 'node:sqlite';
 import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
+import { STARTER_RULES } from './starterRules.ts';
+import type { Bucket } from './types.ts';
 
-const MIGRATIONS: string[] = [
+const MIGRATIONS: (string | ((db: DB) => void))[] = [
   `
   CREATE TABLE categories (
     id INTEGER PRIMARY KEY,
@@ -86,6 +88,16 @@ const MIGRATIONS: string[] = [
     at TEXT NOT NULL DEFAULT (datetime('now'))
   );
   `,
+  (db) => {
+    db.exec(`ALTER TABLE transactions ADD COLUMN reference TEXT NOT NULL DEFAULT '';
+      UPDATE transactions SET reference = COALESCE(json_extract(raw, '$.remittance'), json_extract(raw, '$.Reference'), '');
+      ALTER TABLE categories ADD COLUMN bucket TEXT NOT NULL DEFAULT 'lifestyle';`);
+    // Databases created before buckets existed: keep their categories, add what is new.
+    if ((db.prepare('SELECT COUNT(*) AS n FROM categories').get() as { n: number }).n === 0) return;
+    db.exec(`UPDATE categories SET bucket = 'fixed' WHERE name IN ('Rent & bills', 'Rent', 'Bills & insurance')`);
+    insertCategories(db, DEFAULT_CATEGORIES.filter(([name]) => !name.startsWith('Rent') && !name.startsWith('Bills')));
+    upsertSystemRules(db);
+  },
 ];
 
 export type DB = DatabaseSync;
@@ -97,7 +109,8 @@ export function openDb(path: string): DB {
   const { user_version: version } = db.prepare('PRAGMA user_version').get() as { user_version: number };
   for (let v = version; v < MIGRATIONS.length; v++) {
     tx(db, () => {
-      db.exec(MIGRATIONS[v]!);
+      const m = MIGRATIONS[v]!;
+      if (typeof m === 'string') db.exec(m); else m(db);
       db.exec(`PRAGMA user_version = ${v + 1}`);
     });
   }
@@ -117,23 +130,33 @@ export function tx<T>(db: DB, fn: () => T): T {
   }
 }
 
-const DEFAULT_CATEGORIES: [string, string, number][] = [
-  ['Groceries', '#3a9e5f', 0],
-  ['Eating out', '#e07a2e', 0],
-  ['Going out', '#d4477a', 0],
-  ['Transport', '#3b7dd8', 0],
-  ['Rent & bills', '#6b5bd2', 0],
-  ['Subscriptions', '#8a63b8', 0],
-  ['Shopping', '#c9a227', 0],
-  ['Electronics & games', '#2aa3a3', 0],
-  ['Health', '#d0503c', 0],
-  ['Travel', '#4f9bd9', 0],
-  ['Gifts', '#b86b9e', 0],
-  ['Cash', '#888888', 0],
-  ['Other', '#9a9a9a', 0],
-  ['Salary', '#2f8f4e', 1],
-  ['Other income', '#6aa84f', 1],
+const DEFAULT_CATEGORIES: [name: string, color: string, isIncome: number, bucket: Bucket][] = [
+  ['Groceries', '#3a9e5f', 0, 'lifestyle'],
+  ['Eating out', '#e07a2e', 0, 'lifestyle'],
+  ['Going out', '#d4477a', 0, 'lifestyle'],
+  ['Transport', '#3b7dd8', 0, 'lifestyle'],
+  ['Subscriptions', '#8a63b8', 0, 'lifestyle'],
+  ['Shopping', '#c9a227', 0, 'lifestyle'],
+  ['Electronics & games', '#2aa3a3', 0, 'lifestyle'],
+  ['Health', '#d0503c', 0, 'lifestyle'],
+  ['Sport', '#5aa02c', 0, 'lifestyle'],
+  ['Travel', '#4f9bd9', 0, 'lifestyle'],
+  ['Gifts', '#b86b9e', 0, 'lifestyle'],
+  ['Friends & splits', '#c46a4f', 0, 'lifestyle'],
+  ['Cash', '#888888', 0, 'lifestyle'],
+  ['Other', '#9a9a9a', 0, 'lifestyle'],
+  ['Rent', '#6b5bd2', 0, 'fixed'],
+  ['Bills & insurance', '#5a6fa8', 0, 'fixed'],
+  ['Tuition', '#7a4fa0', 0, 'separate'],
+  ['Salary', '#2f8f4e', 1, 'lifestyle'],
+  ['Benefits', '#4e9a6a', 1, 'lifestyle'],
+  ['Other income', '#6aa84f', 1, 'lifestyle'],
 ];
+
+function insertCategories(db: DB, cats: typeof DEFAULT_CATEGORIES) {
+  const ins = db.prepare('INSERT OR IGNORE INTO categories (name, color, is_income, bucket) VALUES (?, ?, ?, ?)');
+  for (const c of cats) ins.run(...c);
+}
 
 /**
  * System rules that strip Revolut noise before anything else. They are ordinary rules,
@@ -149,19 +172,47 @@ const SYSTEM_RULES: { name: string; priority: number; conditions: unknown[]; kin
   { name: 'Spare change / round-ups', priority: 3, kind: 'internal',
     conditions: [{ field: 'description', op: 'regex', value: 'round[ -]?ups?\\b|spare change' }] },
   { name: 'Transfers to/from savings, vaults & pockets', priority: 4, kind: 'internal',
-    conditions: [{ field: 'description', op: 'regex', value: '\\b(savings?|vault|pockets?|pocket withdrawal|flexible cash funds|instant access)\\b' }] },
+    conditions: [{ field: 'description', op: 'regex', value: '\\b(savings?|vault|pockets?|pocket withdrawal|flexible (cash funds|account)|instant access)\\b' }] },
   // Revolut names vault transfers "To EUR <vault name>" / "From EUR <vault name>"; people never start with a currency code.
   { name: 'Transfers to/from named vaults ("To EUR Japan trip")', priority: 5, kind: 'internal',
     conditions: [{ field: 'description', op: 'regex', caseSensitive: true,
-      value: '^(To|From) (EUR|USD|GBP|CHF|PLN|RON|CZK|HUF|SEK|NOK|DKK|BGN|AUD|CAD|JPY|TRY|ILS|NZD|SGD|HKD|MXN|ZAR|AED|INR|THB) \\S' }] },
+      value: '^(To|From) (EUR|USD|GBP|CHF|PLN|RON|CZK|HUF|SEK|NOK|DKK|BGN|AUD|CAD|JPY|TRY|ILS|NZD|SGD|HKD|MXN|ZAR|AED|INR|THB)( \\S|$)' }] },
+  { name: 'Investing (brokers, investment account)', priority: 6, kind: 'internal',
+    conditions: [{ field: 'description', op: 'regex',
+      value: '\\b(investment account|ibkr|interactive brokers|etoro|degiro|trading ?212|trade republic|scalable capital|saxo bank)\\b' }] },
+  // Paying someone's Revolut request shows "For <merchant> To <name>"; being paid back shows "For <merchant> From <name>".
+  // The merchant is taken from the memo, so the payback lands in that merchant's category as a refund.
+  { name: 'Paybacks for a split bill ("For Lidl From Alex")', priority: 7, kind: 'spend',
+    conditions: [{ field: 'direction', op: 'equals', value: 'in' }, { field: 'reference', op: 'regex', value: '^For\\s.+\\sFrom\\s' }] },
 ];
+
+/** Insert missing built-in rules and bring existing ones (matched by name) up to date. */
+function upsertSystemRules(db: DB) {
+  const find = db.prepare('SELECT id FROM rules WHERE system = 1 AND name = ?');
+  const update = db.prepare('UPDATE rules SET conditions = ?, set_kind = ? WHERE id = ?');
+  const insert = db.prepare('INSERT INTO rules (name, priority, conditions, set_kind, system) VALUES (?, ?, ?, ?, 1)');
+  for (const r of SYSTEM_RULES) {
+    const row = find.get(r.name) as { id: number } | undefined;
+    if (row) update.run(JSON.stringify(r.conditions), r.kind, row.id);
+    else insert.run(r.name, r.priority, JSON.stringify(r.conditions), r.kind);
+  }
+}
+
+/** Labels for well-known chains, so the Label inbox starts with the long tail. Your own labels run first. */
+function insertStarterRules(db: DB) {
+  const catId = db.prepare('SELECT id FROM categories WHERE name = ?');
+  const ins = db.prepare('INSERT INTO rules (name, priority, conditions, set_kind, set_category_id) VALUES (?, ?, ?, ?, ?)');
+  for (const r of STARTER_RULES) {
+    const cat = catId.get(r.category) as { id: number } | undefined;
+    if (cat) ins.run(r.name, 150, JSON.stringify(r.conditions), r.kind ?? null, cat.id);
+  }
+}
 
 function seed(db: DB) {
   tx(db, () => {
-    const cat = db.prepare('INSERT INTO categories (name, color, is_income) VALUES (?, ?, ?)');
-    for (const c of DEFAULT_CATEGORIES) cat.run(...c);
-    const rule = db.prepare('INSERT INTO rules (name, priority, conditions, set_kind, system) VALUES (?, ?, ?, ?, 1)');
-    for (const r of SYSTEM_RULES) rule.run(r.name, r.priority, JSON.stringify(r.conditions), r.kind);
+    insertCategories(db, DEFAULT_CATEGORIES);
+    upsertSystemRules(db);
+    insertStarterRules(db);
     db.prepare("INSERT INTO settings (key, value) VALUES ('base_currency', 'EUR')").run();
   });
 }

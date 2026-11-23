@@ -11,6 +11,8 @@
   --series-1: #2a78d6; /* blue: spending */
   --series-2: #eb6834; /* orange: one-off */
   --series-3: #1baf7a; /* aqua: income */
+  --series-4: #8b5fc7; /* violet: fixed costs */
+  --series-5: #a3a29c; /* gray: set apart */
   --good: #1f8a4c;
   --bad: #c43d3c;
   --seq-0: #cde2fb; --seq-1: #9ec5f4; --seq-2: #6da7ec; --seq-3: #3987e5; --seq-4: #256abf; --seq-5: #184f95;
@@ -33,6 +35,8 @@
     --series-1: #3987e5;
     --series-2: #d95926;
     --series-3: #199e70;
+    --series-4: #9d74d6;
+    --series-5: #74736d;
     --good: #3fb36f;
     --bad: #e66767;
     --seq-0: #1c2a3d; --seq-1: #104281; --seq-2: #184f95; --seq-3: #256abf; --seq-4: #3987e5; --seq-5: #6da7ec;
