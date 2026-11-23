@@ -83,7 +83,7 @@ export function monthlyReport(db: DB): MonthReport[] {
         break;
       case 'reimbursement': {
         const leftover = t.amount - t.allocated;
-        if (leftover > 0) { m.income += leftover; add(m.incomeByCategory, 'uncategorized', leftover); }
+        if (leftover > 0) { m.income += leftover; add(m.incomeByCategory, cat, leftover); }
         break;
       }
       case 'internal':
@@ -188,10 +188,11 @@ export function periodReport(db: DB, from: string, to: string | null = null): Pe
   for (const t of rows) {
     if (t.kind === 'spend') add(spending, t, -t.amount + t.fee - t.reimbursed, t.category);
     else if (t.kind === 'income') add(income, t, t.amount - t.fee, t.category);
-    else if (t.amount - t.allocated > 0) add(income, { ...t, category_id: null }, t.amount - t.allocated, 'Paybacks not linked to an expense');
+    else if (t.amount - t.allocated > 0) add(income, t, t.amount - t.allocated, t.category ?? 'Paybacks not linked to an expense');
   }
   const finish = (groups: Map<string, PeriodGroup>) => {
-    const list = [...groups.values()].sort((a, b) => b.total - a.total);
+    // Fully paid back (a tuition fee your parents covered): nothing left to show.
+    const list = [...groups.values()].filter((g) => g.items.some((i) => i.amount !== 0)).sort((a, b) => b.total - a.total);
     for (const g of list) g.items.sort((a, b) => b.amount - a.amount);
     const byMonth: Record<string, number> = {};
     for (const g of list) for (const [m, v] of Object.entries(g.byMonth)) byMonth[m] = (byMonth[m] ?? 0) + v;

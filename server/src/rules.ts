@@ -170,7 +170,9 @@ export function reclassifyAll(db: DB): { changed: number } {
       let categoryId = c.categoryId;
       let categorySource: string | null = categoryId !== null ? 'rule' : null;
       if (r.category_source === 'manual') { categoryId = r.category_id; categorySource = 'manual'; }
-      if (kind === 'internal' || kind === 'excluded' || kind === 'reimbursement') {
+      // A payback keeps an income category (e.g. "Parents"): whatever it does not cover counts as that income.
+      const keepIncomeCategory = kind === 'reimbursement' && categoryId !== null && incomeCategories.has(categoryId);
+      if ((kind === 'internal' || kind === 'excluded' || kind === 'reimbursement') && !keepIncomeCategory) {
         if (categorySource !== 'manual') { categoryId = null; categorySource = null; }
       }
       const ruleId = categorySource === 'rule' || kindSource === 'rule' ? c.ruleId : null;
