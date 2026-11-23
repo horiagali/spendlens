@@ -40,6 +40,7 @@ export function Summary({ summary, navigate }: AppData) {
   const [data, setData] = useState<PeriodReport | null>(null);
   const [open, setOpen] = useState<{ key: string; month: string | null } | null>(null);
   const [lineSort, setLineSort] = useState<SortBy>('newest');
+  const [viewMonth, setViewMonth] = useState('');
 
   useEffect(() => { api.settings().then((s) => setFrom(s.period_start ?? `${new Date().getFullYear()}-01-01`)); }, []);
   useEffect(() => {
@@ -118,6 +119,22 @@ export function Summary({ summary, navigate }: AppData) {
   };
   const leftByMonth = Object.fromEntries(data.months.map((mo) => [mo, (data.income.byMonth[mo] ?? 0) - (data.spending.byMonth[mo] ?? 0)]));
 
+  // "Where the money came from / went": the whole period or a single month.
+  const inMonth = (groups: PeriodGroup[]) => !viewMonth ? groups : groups
+    .map((g) => { const items = g.items.filter((i) => i.date.startsWith(viewMonth)); return { ...g, items, total: items.reduce((t, i) => t + i.amount, 0) }; })
+    .filter((g) => g.items.some((i) => i.amount !== 0))
+    .sort((a, b) => b.total - a.total);
+  const sum = (groups: PeriodGroup[]) => groups.reduce((t, g) => t + g.total, 0);
+  const inGroups = inMonth(data.income.sources);
+  const outGroups = inMonth(data.spending.categories);
+  const scope = viewMonth ? `month=${viewMonth}` : `from=${data.from}`;
+  const monthPicker = (
+    <select value={viewMonth} onChange={(e) => setViewMonth(e.target.value)} aria-label="Show month">
+      <option value="">Whole period</option>
+      {data.months.map((mo, i) => <option key={mo} value={mo}>{colLabel(mo, i)}</option>)}
+    </select>
+  );
+
   return (
     <>
       <div className="row" style={{ marginBottom: 16 }}>
@@ -156,23 +173,34 @@ export function Summary({ summary, navigate }: AppData) {
       </div>
 
       <div className="card">
-        <h2>Where the money came from</h2>
-        <Groups groups={data.income.sources} total={data.income.total} m={m} perMonth={perMonth}
-          open={(g) => navigate(`transactions?from=${data.from}&kind=income&category=${g.categoryId ?? 'none'}`)} />
+        <div className="row" style={{ marginBottom: 8 }}>
+          <h2 style={{ margin: 0 }}>Where the money came from</h2>
+          <div className="spacer" />
+          {monthPicker}
+        </div>
+        <Groups groups={inGroups} total={sum(inGroups)} m={m} perMonth={viewMonth ? undefined : perMonth}
+          open={(g) => navigate(`transactions?${scope}&kind=income&category=${g.categoryId ?? 'none'}`)} />
       </div>
 
       <div className="card">
-        <h2>Where it went</h2>
-        <p className="muted small" style={{ marginTop: -6 }}>Click a category to see what is behind it. Paybacks from friends and refunds are already subtracted.</p>
-        {BUCKETS.filter((b) => data.spending.categories.some((c) => c.bucket === b)).map((b) => (
-          <Fragment key={b}>
-            <h3 className="small" style={{ margin: '14px 0 4px', color: 'var(--text-secondary)' }}>
-              {BUCKET_LABEL[b].toUpperCase()} · {m(data.spending.byBucket[b])} · {m(perMonth(data.spending.byBucket[b]))} / month
-            </h3>
-            <Groups groups={data.spending.categories.filter((c) => c.bucket === b)} total={data.spending.total} m={m} perMonth={perMonth}
-              open={(g) => navigate(`transactions?from=${data.from}&kind=spend&category=${g.categoryId ?? 'none'}`)} />
-          </Fragment>
-        ))}
+        <div className="row" style={{ marginBottom: 8 }}>
+          <h2 style={{ margin: 0 }}>Where it went</h2>
+          <div className="spacer" />
+          {monthPicker}
+        </div>
+        <p className="muted small" style={{ marginTop: 0 }}>Click a category to see what is behind it. Paybacks from friends and refunds are already subtracted.</p>
+        {BUCKETS.filter((b) => outGroups.some((c) => c.bucket === b)).map((b) => {
+          const groups = outGroups.filter((c) => c.bucket === b);
+          return (
+            <Fragment key={b}>
+              <h3 className="small" style={{ margin: '14px 0 4px', color: 'var(--text-secondary)' }}>
+                {BUCKET_LABEL[b].toUpperCase()} · {m(sum(groups))}{!viewMonth && ` · ${m(perMonth(sum(groups)))} / month`}
+              </h3>
+              <Groups groups={groups} total={sum(outGroups)} m={m} perMonth={viewMonth ? undefined : perMonth}
+                open={(g) => navigate(`transactions?${scope}&kind=spend&category=${g.categoryId ?? 'none'}`)} />
+            </Fragment>
+          );
+        })}
       </div>
     </>
   );
@@ -183,7 +211,7 @@ function Tile({ label, value, sub }: { label: string; value: string; sub: string
 }
 
 function Groups({ groups, total, m, perMonth, open }: {
-  groups: PeriodGroup[]; total: number; m: (c: number) => string; perMonth: (c: number) => number; open: (g: PeriodGroup) => void;
+  groups: PeriodGroup[]; total: number; m: (c: number) => string; perMonth?: (c: number) => number; open: (g: PeriodGroup) => void;
 }) {
   const [expanded, setExpanded] = useState<string | null>(null);
   const [sortBy, setSortBy] = useState<SortBy>('biggest');
@@ -206,7 +234,7 @@ function Groups({ groups, total, m, perMonth, open }: {
                     width: `${Math.max(0, (g.total / max) * 100)}%` }} />
                 </td>
                 <td className="num" style={{ width: 90 }}>{m(g.total)}</td>
-                <td className="num muted small" style={{ width: 90 }}>{m(perMonth(g.total))} / mo</td>
+                {perMonth && <td className="num muted small" style={{ width: 90 }}>{m(perMonth(g.total))} / mo</td>}
                 <td className="num muted small" style={{ width: 60 }}>{total > 0 ? `${Math.round((g.total / total) * 100)}%` : ''}</td>
                 <td className="num muted small" style={{ width: 50 }}>{g.items.length}×</td>
               </tr>

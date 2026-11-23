@@ -162,14 +162,17 @@ export interface PeriodReport {
 export function periodReport(db: DB, from: string, to: string | null = null): PeriodReport {
   const currency = getSetting(db, 'base_currency') ?? 'EUR';
   const until = to ?? '9999-12-31';
-  const rows = db.prepare(`SELECT t.id, t.date, t.merchant, t.description, t.amount, t.fee, t.kind, t.one_off, t.spread_months,
+  const raw = db.prepare(`SELECT t.id, t.date, t.merchant, t.description, t.amount, t.fee, t.kind, t.one_off, t.spread_months,
       t.category_id, c.name AS category, COALESCE(c.bucket, 'lifestyle') AS bucket,
       COALESCE((SELECT SUM(r.amount) FROM reimbursements r WHERE r.expense_id = t.id), 0) AS reimbursed,
       COALESCE((SELECT SUM(r.amount) FROM reimbursements r WHERE r.incoming_id = t.id), 0) AS allocated
     FROM transactions t LEFT JOIN categories c ON c.id = t.category_id
     WHERE t.currency = ? AND t.date <= ? AND date(t.date, '+' || (t.spread_months - 1) || ' months', 'start of month') >= date(?, 'start of month')
       AND t.kind IN ('spend', 'income', 'reimbursement')`)
-    .all(currency, until, from).flatMap((t) => spread(t as Record<string, any>)).filter((t) => t.date >= from && t.date <= until);
+    .all(currency, until, from) as Record<string, any>[];
+  // Parts of a spread payment that fall after the latest real transaction (a later month) wait until that month has data.
+  const lastReal = to ?? raw.reduce((max, t) => (t.date > max ? t.date : max), from);
+  const rows = raw.flatMap((t) => spread(t)).filter((t) => t.date >= from && t.date <= lastReal);
 
   const income = new Map<string, PeriodGroup>();
   const spending = new Map<string, PeriodGroup>();
@@ -204,7 +207,7 @@ export function periodReport(db: DB, from: string, to: string | null = null): Pe
   for (const g of sp.list) byBucket[g.bucket] += g.total;
   return {
     from,
-    to: to ?? (rows.reduce((m, t) => (t.date > m ? t.date : m), from)),
+    to: lastReal,
     months: [...months].sort(),
     income: { total: inc.total, byMonth: inc.byMonth, sources: inc.list },
     spending: { total: sp.total, byMonth: sp.byMonth, byBucket, categories: sp.list },
