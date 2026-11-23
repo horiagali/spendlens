@@ -1,5 +1,5 @@
 import { Fragment, useEffect, useState } from 'react';
-import { api, BUCKET_LABEL, BUCKETS, monthLabel, moneyShort, money, type PeriodGroup, type PeriodReport } from '../api.ts';
+import { api, BUCKET_LABEL, BUCKETS, monthLabel, moneyShort, money, type PeriodGroup, type PeriodItem, type PeriodReport } from '../api.ts';
 import type { AppData } from '../App.tsx';
 
 /** How many months a period covers, counting partial first/last months by their share of days. */
@@ -18,6 +18,7 @@ export function Summary({ summary, navigate }: AppData) {
   const currency = summary?.baseCurrency ?? 'EUR';
   const [from, setFrom] = useState('');
   const [data, setData] = useState<PeriodReport | null>(null);
+  const [open, setOpen] = useState<{ key: string; month: string | null } | null>(null);
 
   useEffect(() => { api.settings().then((s) => setFrom(s.period_start ?? `${new Date().getFullYear()}-01-01`)); }, []);
   useEffect(() => {
@@ -37,14 +38,52 @@ export function Summary({ summary, navigate }: AppData) {
   const lifestyleOneOff = data.spending.categories.filter((g) => g.bucket === 'lifestyle')
     .reduce((sum, g) => sum + g.items.reduce((s2, i) => s2 + (i.oneOff ? i.amount : 0), 0), 0);
 
-  const row = (label: string, byMonth: Record<string, number>, total: number, style: 'bold' | 'sub' | 'normal' = 'normal') => (
-    <tr key={label} style={{ fontWeight: style === 'bold' ? 600 : undefined }}>
-      <td style={{ paddingLeft: style === 'sub' ? 20 : undefined }}>{label}</td>
-      {data.months.map((mo) => <td key={mo} className="num">{byMonth[mo] ? m(byMonth[mo]) : '–'}</td>)}
-      <td className="num">{m(total)}</td>
-      <td className="num muted">{m(perMonth(total))}</td>
-    </tr>
-  );
+  type Line = PeriodItem & { category: string };
+  const linesOf = (groups: PeriodGroup[]): Line[] => groups.flatMap((g) => g.items.map((i) => ({ ...i, category: g.name })));
+  const row = (label: string, byMonth: Record<string, number>, total: number, style: 'bold' | 'sub' | 'normal' = 'normal', lines?: Line[]) => {
+    const isOpen = open?.key === label;
+    const toggle = (month: string | null) => lines && setOpen(isOpen && open?.month === month ? null : { key: label, month });
+    const shown = isOpen && lines ? lines.filter((l) => !open!.month || l.date.startsWith(open!.month)).sort((a, b) => b.date.localeCompare(a.date)) : [];
+    const cell = { cursor: lines ? 'pointer' : undefined };
+    return (
+      <Fragment key={label}>
+        <tr style={{ fontWeight: style === 'bold' ? 600 : undefined }} className={lines ? 'clickable' : undefined}>
+          <td style={{ ...cell, paddingLeft: style === 'sub' ? 20 : undefined }} onClick={() => toggle(null)}>
+            {lines && <span className="muted">{isOpen ? '▾ ' : '▸ '}</span>}{label}
+          </td>
+          {data.months.map((mo) => (
+            <td key={mo} className="num" style={{ ...cell, textDecoration: isOpen && open?.month === mo ? 'underline' : undefined }} onClick={() => toggle(mo)}>
+              {byMonth[mo] ? m(byMonth[mo]) : '–'}
+            </td>
+          ))}
+          <td className="num" style={cell} onClick={() => toggle(null)}>{m(total)}</td>
+          <td className="num muted">{m(perMonth(total))}</td>
+        </tr>
+        {isOpen && (
+          <tr>
+            <td colSpan={data.months.length + 3} style={{ background: 'var(--surface-0)', padding: '6px 12px 10px 28px' }}>
+              <div className="small muted" style={{ marginBottom: 4 }}>
+                {label} · {open!.month ? monthLabel(open!.month, 'long') : 'whole period'} · {shown.length} transactions ·{' '}
+                {m(shown.reduce((sum, l) => sum + l.amount, 0))}
+              </div>
+              <table>
+                <tbody>
+                  {shown.map((l) => (
+                    <tr key={l.id}>
+                      <td className="small muted" style={{ width: 90 }}>{l.date}</td>
+                      <td className="small">{l.merchant}{l.oneOff && <span className="pill" style={{ marginLeft: 6 }}>one-off</span>}</td>
+                      <td className="small muted">{l.category}</td>
+                      <td className="num small">{money(l.amount)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </td>
+          </tr>
+        )}
+      </Fragment>
+    );
+  };
   const bucketByMonth = (b: string) => {
     const out: Record<string, number> = {};
     for (const g of data.spending.categories.filter((c) => c.bucket === b)) for (const [k, v] of Object.entries(g.byMonth)) out[k] = (out[k] ?? 0) + v;
@@ -75,13 +114,15 @@ export function Summary({ summary, navigate }: AppData) {
 
       <div className="card">
         <h2>Month by month</h2>
+        <p className="muted small" style={{ marginTop: -6 }}>Click a row to see its transactions, or a month to see just that month.</p>
         <table>
           <thead><tr><th></th>{data.months.map((mo, i) => <th key={mo} className="num">{colLabel(mo, i)}</th>)}<th className="num">Total</th><th className="num">Per month</th></tr></thead>
           <tbody>
-            {row('Money in', data.income.byMonth, data.income.total, 'bold')}
-            {data.income.sources.map((g) => row(g.name, g.byMonth, g.total, 'sub'))}
-            {row('Money out', data.spending.byMonth, data.spending.total, 'bold')}
-            {BUCKETS.filter((b) => data.spending.byBucket[b]).map((b) => row(BUCKET_LABEL[b], bucketByMonth(b), data.spending.byBucket[b], 'sub'))}
+            {row('Money in', data.income.byMonth, data.income.total, 'bold', linesOf(data.income.sources))}
+            {data.income.sources.map((g) => row(g.name, g.byMonth, g.total, 'sub', linesOf([g])))}
+            {row('Money out', data.spending.byMonth, data.spending.total, 'bold', linesOf(data.spending.categories))}
+            {BUCKETS.filter((b) => data.spending.byBucket[b]).map((b) => row(BUCKET_LABEL[b], bucketByMonth(b), data.spending.byBucket[b], 'sub',
+              linesOf(data.spending.categories.filter((c) => c.bucket === b))))}
             {row('Left over', leftByMonth, left, 'bold')}
           </tbody>
         </table>

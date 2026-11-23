@@ -100,3 +100,4 @@ tr.dim td { color: var(--text-muted); }
 .heat td.cell { text-align: right; font-variant-numeric: tabular-nums; font-size: 12px; padding: 5px 6px; border: 2px solid var(--surface-1); border-radius: 4px; }
 .split-card { display: grid; grid-template-columns: 1fr auto 1fr auto; gap: 12px; align-items: center; padding: 10px 0; border-bottom: 1px solid var(--grid); }
 .split-card:last-child { border-bottom: 0; }
+tr.clickable:hover td { background: var(--surface-0); }
