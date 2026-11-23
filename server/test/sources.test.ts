@@ -142,3 +142,15 @@ test('period report groups money in and out; review queue flags big transfers wi
   assert.equal(queue.length, 1);
   assert.match(queue[0]!.reasons[0]!, /from a person/);
 });
+
+test('a payment spread over two months counts half in each', () => {
+  const db = openDb(':memory:');
+  importTransactions(db, [mapEbTransaction({
+    entry_reference: 'x', transaction_amount: { amount: '523.01', currency: 'EUR' }, credit_debit_indicator: 'CRDT',
+    status: 'BOOK', booking_date: '2026-09-23', debtor: { name: 'BELASTINGDIENST' }, bank_transaction_code: { code: 'TOPUP' },
+  }, ACCOUNT)]);
+  db.prepare('UPDATE transactions SET spread_months = 2').run();
+  assert.deepEqual(monthlyReport(db).map((m) => [m.month, m.income]), [['2026-09', 26151], ['2026-10', 26150]]);
+  const p = periodReport(db, '2026-10-01');
+  assert.deepEqual([p.income.total, p.income.sources[0]!.items[0]!.part], [26150, '2/2']);
+});

@@ -12,7 +12,7 @@ import { BUCKETS, KINDS, type Bucket, type Kind } from './types.ts';
 
 const TXN_COLUMNS = `t.id, t.source, t.account, t.type, t.started_at AS startedAt, t.date, t.description, t.reference, t.merchant,
   t.merchant_key AS merchantKey, t.counterparty, t.amount, t.fee, t.currency, t.state, t.kind, t.kind_source AS kindSource,
-  t.category_id AS categoryId, t.category_source AS categorySource, t.rule_id AS ruleId, t.one_off AS oneOff, t.note, t.reviewed,
+  t.category_id AS categoryId, t.category_source AS categorySource, t.rule_id AS ruleId, t.one_off AS oneOff, t.note, t.reviewed, t.spread_months AS spreadMonths,
   COALESCE((SELECT SUM(r.amount) FROM reimbursements r WHERE r.expense_id = t.id), 0) AS reimbursed,
   COALESCE((SELECT SUM(r.amount) FROM reimbursements r WHERE r.incoming_id = t.id), 0) AS allocated`;
 
@@ -100,6 +100,11 @@ export function buildApi(db: DB): Router {
     if ('kind' in b || 'categoryId' in b) db.prepare('UPDATE transactions SET reviewed = 1 WHERE id = ?').run(params.id!);
     if ('reviewed' in b) db.prepare('UPDATE transactions SET reviewed = ? WHERE id = ?').run(b.reviewed ? 1 : 0, params.id!);
     if ('oneOff' in b) db.prepare('UPDATE transactions SET one_off = ? WHERE id = ?').run(b.oneOff ? 1 : 0, params.id!);
+    if ('spreadMonths' in b) {
+      const n = Number(b.spreadMonths);
+      if (!Number.isInteger(n) || n < 1 || n > 24) throw new HttpError(400, 'spreadMonths must be 1-24');
+      db.prepare('UPDATE transactions SET spread_months = ? WHERE id = ?').run(n, params.id!);
+    }
     if ('note' in b) db.prepare('UPDATE transactions SET note = ? WHERE id = ?').run(b.note || null, params.id!);
     reclassifyAll(db);
     return db.prepare(`SELECT ${TXN_COLUMNS} FROM transactions t WHERE t.id = ?`).get(params.id!);

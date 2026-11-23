@@ -71,7 +71,8 @@ export function Summary({ summary, navigate }: AppData) {
                   {shown.map((l) => (
                     <tr key={l.id}>
                       <td className="small muted" style={{ width: 90 }}>{l.date}</td>
-                      <td className="small">{l.merchant}{l.oneOff && <span className="pill" style={{ marginLeft: 6 }}>one-off</span>}</td>
+                      <td className="small">{l.merchant}{l.oneOff && <span className="pill" style={{ marginLeft: 6 }}>one-off</span>}
+                        {l.part && <span className="pill" style={{ marginLeft: 6 }} title="Spread over several months">{l.part}</span>}</td>
                       <td className="small muted">{l.category}</td>
                       <td className="num small">{money(l.amount)}</td>
                     </tr>
@@ -189,7 +190,8 @@ function Groups({ groups, total, m, perMonth, open }: {
                         {items.map((i) => (
                           <tr key={i.id}>
                             <td className="small muted" style={{ width: 90 }}>{i.date}</td>
-                            <td className="small">{i.merchant}{i.oneOff && <span className="pill" style={{ marginLeft: 6 }}>one-off</span>}</td>
+                            <td className="small">{i.merchant}{i.oneOff && <span className="pill" style={{ marginLeft: 6 }}>one-off</span>}
+                            {i.part && <span className="pill" style={{ marginLeft: 6 }} title="Spread over several months">{i.part}</span>}</td>
                             <td className="num small">{money(i.amount)}</td>
                           </tr>
                         ))}

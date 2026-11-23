@@ -2,6 +2,32 @@ import type { DB } from './db.ts';
 import { getSetting } from './db.ts';
 import type { Bucket } from './types.ts';
 
+const SPREAD_FIELDS = ['amount', 'fee', 'reimbursed', 'allocated'] as const;
+const addMonths = (month: string, n: number) => {
+  const d = new Date(Date.UTC(Number(month.slice(0, 4)), Number(month.slice(5, 7)) - 1 + n, 1));
+  return d.toISOString().slice(0, 7);
+};
+
+/**
+ * A transaction with spread_months = n becomes n equal parts, one per month starting with its own;
+ * later parts are dated the 1st of their month. Leftover cents go to the first part.
+ */
+function spread<T extends Record<string, any>>(t: T): (T & { part: number; parts: number })[] {
+  const n = Math.max(1, Number(t.spread_months ?? 1));
+  if (n === 1) return [{ ...t, part: 1, parts: 1 }];
+  return Array.from({ length: n }, (_, i) => {
+    const p: Record<string, any> = { ...t, part: i + 1, parts: n };
+    if (i > 0) { p.date = `${addMonths(t.date.slice(0, 7), i)}-01`; }
+    p.month = p.date.slice(0, 7);
+    for (const f of SPREAD_FIELDS) {
+      if (typeof t[f] !== 'number') continue;
+      const base = Math.trunc(t[f] / n);
+      p[f] = i === 0 ? t[f] - base * (n - 1) : base;
+    }
+    return p as T & { part: number; parts: number };
+  });
+}
+
 export interface MonthReport {
   month: string; // YYYY-MM
   income: number; // cents
@@ -32,11 +58,11 @@ export function monthlyReport(db: DB): MonthReport[] {
   };
   const add = (rec: Record<string, number>, key: string, v: number) => { rec[key] = (rec[key] ?? 0) + v; };
 
-  const rows = db.prepare(`SELECT t.id, substr(t.date, 1, 7) AS month, t.amount, t.fee, t.kind, t.category_id, t.one_off, t.account,
+  const rows = db.prepare(`SELECT t.id, t.date, substr(t.date, 1, 7) AS month, t.amount, t.fee, t.kind, t.category_id, t.one_off, t.account, t.spread_months,
       COALESCE((SELECT c.bucket FROM categories c WHERE c.id = t.category_id), 'lifestyle') AS bucket,
       COALESCE((SELECT SUM(r.amount) FROM reimbursements r WHERE r.expense_id = t.id), 0) AS reimbursed,
       COALESCE((SELECT SUM(r.amount) FROM reimbursements r WHERE r.incoming_id = t.id), 0) AS allocated
-    FROM transactions t WHERE t.currency = ?`).all(currency) as Record<string, any>[];
+    FROM transactions t WHERE t.currency = ?`).all(currency).flatMap((t) => spread(t as Record<string, any>));
 
   for (const t of rows) {
     const m = get(t.month);
@@ -109,7 +135,10 @@ export function compareAround(db: DB, cutoff: string): { before: PeriodSummary; 
   };
 }
 
-export interface PeriodItem { id: string; date: string; merchant: string; description: string; amount: number; oneOff: boolean; }
+export interface PeriodItem {
+  id: string; date: string; merchant: string; description: string; amount: number; oneOff: boolean;
+  part?: string; // "1/2" when the payment is spread over several months
+}
 export interface PeriodGroup {
   categoryId: number | null;
   name: string;
@@ -133,13 +162,14 @@ export interface PeriodReport {
 export function periodReport(db: DB, from: string, to: string | null = null): PeriodReport {
   const currency = getSetting(db, 'base_currency') ?? 'EUR';
   const until = to ?? '9999-12-31';
-  const rows = db.prepare(`SELECT t.id, t.date, t.merchant, t.description, t.amount, t.fee, t.kind, t.one_off,
+  const rows = db.prepare(`SELECT t.id, t.date, t.merchant, t.description, t.amount, t.fee, t.kind, t.one_off, t.spread_months,
       t.category_id, c.name AS category, COALESCE(c.bucket, 'lifestyle') AS bucket,
       COALESCE((SELECT SUM(r.amount) FROM reimbursements r WHERE r.expense_id = t.id), 0) AS reimbursed,
       COALESCE((SELECT SUM(r.amount) FROM reimbursements r WHERE r.incoming_id = t.id), 0) AS allocated
     FROM transactions t LEFT JOIN categories c ON c.id = t.category_id
-    WHERE t.currency = ? AND t.date >= ? AND t.date <= ? AND t.kind IN ('spend', 'income', 'reimbursement')`)
-    .all(currency, from, until) as Record<string, any>[];
+    WHERE t.currency = ? AND t.date <= ? AND date(t.date, '+' || (t.spread_months - 1) || ' months', 'start of month') >= date(?, 'start of month')
+      AND t.kind IN ('spend', 'income', 'reimbursement')`)
+    .all(currency, until, from).flatMap((t) => spread(t as Record<string, any>)).filter((t) => t.date >= from && t.date <= until);
 
   const income = new Map<string, PeriodGroup>();
   const spending = new Map<string, PeriodGroup>();
@@ -152,7 +182,8 @@ export function periodReport(db: DB, from: string, to: string | null = null): Pe
     months.add(month);
     g.total += value;
     g.byMonth[month] = (g.byMonth[month] ?? 0) + value;
-    g.items.push({ id: t.id, date: t.date, merchant: t.merchant, description: t.description, amount: value, oneOff: !!t.one_off });
+    g.items.push({ id: t.id, date: t.date, merchant: t.merchant, description: t.description, amount: value, oneOff: !!t.one_off,
+      ...(t.parts > 1 ? { part: `${t.part}/${t.parts}` } : {}) });
   };
   for (const t of rows) {
     if (t.kind === 'spend') add(spending, t, -t.amount + t.fee - t.reimbursed, t.category);

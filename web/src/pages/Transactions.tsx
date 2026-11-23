@@ -51,7 +51,7 @@ export function Transactions({ categories, refresh, summary, query }: AppData & 
       </div>
       <div className="card" style={{ padding: 0 }}>
         <table>
-          <thead><tr><th>Date</th><th>Description</th><th className="num">Amount</th><th>Kind</th><th>Category</th><th title="One-off purchase">1×</th></tr></thead>
+          <thead><tr><th>Date</th><th>Description</th><th className="num">Amount</th><th>Kind</th><th>Category</th><th title="One-off purchase">1×</th><th title="Count this payment evenly over several months">Months</th></tr></thead>
           <tbody>
             {data?.items.map((t) => {
               const dim = t.kind === 'internal' || t.kind === 'excluded';
@@ -87,6 +87,12 @@ export function Transactions({ categories, refresh, summary, query }: AppData & 
                   </td>
                   <td>{t.kind === 'spend' && t.amount < 0 && (
                     <input type="checkbox" checked={!!t.oneOff} onChange={(e) => update(t, { oneOff: e.target.checked })} title="One-off purchase" />
+                  )}</td>
+                  <td>{(t.kind === 'spend' || t.kind === 'income') && (
+                    <select value={t.spreadMonths} onChange={(e) => update(t, { spreadMonths: Number(e.target.value) })}
+                      title="Count this payment evenly over this many months, starting with its own" aria-label="Spread over months">
+                      {[1, 2, 3, 4, 6, 12].map((n) => <option key={n} value={n}>{n === 1 ? '1' : `${n} mo`}</option>)}
+                    </select>
                   )}</td>
                 </tr>
               );

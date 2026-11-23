@@ -100,6 +100,8 @@ const MIGRATIONS: (string | ((db: DB) => void))[] = [
   },
   // Set once you have looked at a transaction on the Review page (or changed it by hand).
   `ALTER TABLE transactions ADD COLUMN reviewed INTEGER NOT NULL DEFAULT 0;`,
+  // Count a payment evenly over this many months from its own (e.g. two months of rent allowance paid at once).
+  `ALTER TABLE transactions ADD COLUMN spread_months INTEGER NOT NULL DEFAULT 1;`,
 ];
 
 export type DB = DatabaseSync;

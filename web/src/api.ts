@@ -9,9 +9,9 @@ export interface Txn {
   id: string; source: string; account: string; type: string; startedAt: string; date: string; description: string; reference: string;
   merchant: string; merchantKey: string; counterparty: string | null; amount: number; fee: number; currency: string;
   state: string; kind: Kind; kindSource: string; categoryId: number | null; categorySource: string | null;
-  ruleId: number | null; oneOff: number; note: string | null; reimbursed: number; allocated: number; reviewed: number;
+  ruleId: number | null; oneOff: number; note: string | null; reimbursed: number; allocated: number; reviewed: number; spreadMonths: number;
 }
-export interface PeriodItem { id: string; date: string; merchant: string; description: string; amount: number; oneOff: boolean; }
+export interface PeriodItem { id: string; date: string; merchant: string; description: string; amount: number; oneOff: boolean; part?: string; }
 export interface PeriodGroup { categoryId: number | null; name: string; bucket: Bucket; total: number; byMonth: Record<string, number>; items: PeriodItem[]; }
 export interface PeriodReport {
   from: string; to: string; months: string[];
@@ -65,7 +65,7 @@ export const api = {
   transactions: (p: Record<string, string | number | undefined>) => req<{ total: number; items: Txn[] }>('GET', `/api/transactions?${qs(p)}`),
   period: (from?: string) => req<PeriodReport>('GET', `/api/period?${qs({ from })}`),
   review: () => req<ReviewItem[]>('GET', '/api/review'),
-  updateTxn: (id: string, patch: Partial<{ kind: Kind | null; categoryId: number | null; oneOff: boolean; note: string; reviewed: boolean }>) =>
+  updateTxn: (id: string, patch: Partial<{ kind: Kind | null; categoryId: number | null; oneOff: boolean; note: string; reviewed: boolean; spreadMonths: number }>) =>
     req<Txn>('PATCH', `/api/transactions/${encodeURIComponent(id)}`, patch),
   inbox: () => req<InboxItem[]>('GET', '/api/inbox'),
   label: (b: { merchantKey: string; merchant: string; categoryId?: number | null; kind?: Kind | null }) => req('POST', '/api/inbox/label', b),
