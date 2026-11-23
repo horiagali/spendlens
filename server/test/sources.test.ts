@@ -4,7 +4,7 @@ import { test } from 'node:test';
 import { openDb } from '../src/db.ts';
 import { makeJwt, mapEbTransaction } from '../src/importers/enableBanking.ts';
 import { parseRevolutCsv } from '../src/importers/revolutCsv.ts';
-import { monthlyReport } from '../src/reports.ts';
+import { monthlyReport, periodReport, reviewQueue } from '../src/reports.ts';
 import { importTransactions } from '../src/store.ts';
 
 const NEW_STYLE = `Type,Product,Started Date,Completed Date,Description,Amount,Fee,Currency,State,Balance
@@ -120,4 +120,25 @@ test('split-bill memos, company transfers and buckets', () => {
   assert.equal(row('e').category, 'Groceries'); // not tuition
   const [m] = monthlyReport(db);
   assert.deepEqual(m!.byBucket, { lifestyle: 2000 - 500 + 300, fixed: 67212, separate: 253000 });
+});
+
+test('period report groups money in and out; review queue flags big transfers with people', () => {
+  const db = openDb(':memory:');
+  const tx = (ref: string, amount: string, dbit: boolean, date: string, extra: Record<string, unknown>) => mapEbTransaction({
+    entry_reference: ref, transaction_amount: { amount, currency: 'EUR' }, credit_debit_indicator: dbit ? 'DBIT' : 'CRDT',
+    status: 'BOOK', booking_date: date, bank_transaction_code: { code: 'TRANSFER' }, ...extra,
+  }, ACCOUNT);
+  importTransactions(db, [
+    tx('s', '1600.00', false, '2026-10-26', { debtor: { name: 'ACME BV' }, bank_transaction_code: { code: 'TOPUP' }, remittance_information: ['Oct 2026 salary'] }),
+    tx('l', '40.00', true, '2026-10-02', { creditor: { name: 'Lidl 263 Delft' }, bank_transaction_code: { code: 'CARD_PAYMENT' } }),
+    tx('f', '300.00', false, '2026-10-05', { debtor: { name: 'John Doe' }, creditor: { name: 'Jane Me' } }),
+    tx('old', '50.00', true, '2026-08-02', { creditor: { name: 'Lidl 263 Delft' }, bank_transaction_code: { code: 'CARD_PAYMENT' } }),
+  ]);
+  const p = periodReport(db, '2026-09-01');
+  assert.deepEqual(p.months, ['2026-10']);
+  assert.equal(p.income.sources.find((g) => g.name === 'Salary')?.total, 160000);
+  assert.equal(p.spending.categories.find((g) => g.name === 'Groceries')?.total, 4000);
+  const queue = reviewQueue(db, '2026-09-01');
+  assert.equal(queue.length, 1);
+  assert.match(queue[0]!.reasons[0]!, /from a person/);
 });

@@ -98,6 +98,8 @@ const MIGRATIONS: (string | ((db: DB) => void))[] = [
     insertCategories(db, DEFAULT_CATEGORIES.filter(([name]) => !name.startsWith('Rent') && !name.startsWith('Bills')));
     upsertSystemRules(db);
   },
+  // Set once you have looked at a transaction on the Review page (or changed it by hand).
+  `ALTER TABLE transactions ADD COLUMN reviewed INTEGER NOT NULL DEFAULT 0;`,
 ];
 
 export type DB = DatabaseSync;

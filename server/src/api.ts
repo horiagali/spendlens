@@ -2,7 +2,7 @@ import type { DB } from './db.ts';
 import { getSetting, setSetting } from './db.ts';
 import { HttpError, Router } from './http.ts';
 import { parseRevolutCsv } from './importers/revolutCsv.ts';
-import { compareAround, monthlyReport } from './reports.ts';
+import { compareAround, monthlyReport, periodReport, reviewQueue } from './reports.ts';
 import type { Condition } from './rules.ts';
 import { loadRules, matchesRule, reclassifyAll, upsertMerchantRule } from './rules.ts';
 import { acceptAllSuggestions, dismissSuggestion, linkReimbursement, suggestSplits, unlinkReimbursement } from './splits.ts';
@@ -12,7 +12,7 @@ import { BUCKETS, KINDS, type Bucket, type Kind } from './types.ts';
 
 const TXN_COLUMNS = `t.id, t.source, t.account, t.type, t.started_at AS startedAt, t.date, t.description, t.reference, t.merchant,
   t.merchant_key AS merchantKey, t.counterparty, t.amount, t.fee, t.currency, t.state, t.kind, t.kind_source AS kindSource,
-  t.category_id AS categoryId, t.category_source AS categorySource, t.rule_id AS ruleId, t.one_off AS oneOff, t.note,
+  t.category_id AS categoryId, t.category_source AS categorySource, t.rule_id AS ruleId, t.one_off AS oneOff, t.note, t.reviewed,
   COALESCE((SELECT SUM(r.amount) FROM reimbursements r WHERE r.expense_id = t.id), 0) AS reimbursed,
   COALESCE((SELECT SUM(r.amount) FROM reimbursements r WHERE r.incoming_id = t.id), 0) AS allocated`;
 
@@ -47,12 +47,30 @@ export function buildApi(db: DB): Router {
     return compareAround(db, cutoff);
   });
 
+  r.get('/api/period', ({ url }) => {
+    const from = url.searchParams.get('from') ?? getSetting(db, 'period_start');
+    if (!from || !/^\d{4}-\d{2}-\d{2}$/.test(from)) throw new HttpError(400, 'from=YYYY-MM-DD required');
+    return periodReport(db, from, url.searchParams.get('to'));
+  });
+
+  // --- review: transactions a rule could not decide well, for a quick look by hand ---
+  r.get('/api/review', ({ url }) => {
+    const from = url.searchParams.get('from') ?? getSetting(db, 'period_start') ?? '0000-00-00';
+    const items = reviewQueue(db, from);
+    const ids = items.map((i) => i.id);
+    const txns = ids.length ? db.prepare(`SELECT ${TXN_COLUMNS} FROM transactions t WHERE t.id IN (${ids.map(() => '?').join(',')})`).all(...ids) as any[] : [];
+    const byId = new Map(txns.map((t) => [t.id, t]));
+    return items.map((i) => ({ ...byId.get(i.id), reasons: i.reasons }));
+  });
+
   // --- transactions ---
   r.get('/api/transactions', ({ url }) => {
     const p = url.searchParams;
     const where: string[] = [];
     const args: (string | number)[] = [];
     if (p.get('month')) { where.push('t.date LIKE ?'); args.push(`${p.get('month')}%`); }
+    if (p.get('from')) { where.push('t.date >= ?'); args.push(p.get('from')!); }
+    if (p.get('to')) { where.push('t.date <= ?'); args.push(p.get('to')!); }
     if (p.get('kind')) { where.push('t.kind = ?'); args.push(p.get('kind')!); }
     if (p.get('category') === 'none') where.push('t.category_id IS NULL');
     else if (p.get('category')) { where.push('t.category_id = ?'); args.push(Number(p.get('category'))); }
@@ -79,6 +97,8 @@ export function buildApi(db: DB): Router {
       if (b.categoryId === null) db.prepare('UPDATE transactions SET category_id = NULL, category_source = NULL WHERE id = ?').run(params.id!);
       else db.prepare("UPDATE transactions SET category_id = ?, category_source = 'manual' WHERE id = ?").run(Number(b.categoryId), params.id!);
     }
+    if ('kind' in b || 'categoryId' in b) db.prepare('UPDATE transactions SET reviewed = 1 WHERE id = ?').run(params.id!);
+    if ('reviewed' in b) db.prepare('UPDATE transactions SET reviewed = ? WHERE id = ?').run(b.reviewed ? 1 : 0, params.id!);
     if ('oneOff' in b) db.prepare('UPDATE transactions SET one_off = ? WHERE id = ?').run(b.oneOff ? 1 : 0, params.id!);
     if ('note' in b) db.prepare('UPDATE transactions SET note = ? WHERE id = ?').run(b.note || null, params.id!);
     reclassifyAll(db);

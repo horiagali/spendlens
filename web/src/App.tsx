@@ -3,8 +3,10 @@ import { api, type Category, type Summary } from './api.ts';
 import { ImportPage } from './pages/Import.tsx';
 import { Inbox } from './pages/Inbox.tsx';
 import { Overview } from './pages/Overview.tsx';
+import { Review } from './pages/Review.tsx';
 import { Rules } from './pages/Rules.tsx';
 import { Splits } from './pages/Splits.tsx';
+import { Summary as SummaryPage } from './pages/Summary.tsx';
 import { Transactions } from './pages/Transactions.tsx';
 
 export interface AppData {
@@ -15,7 +17,9 @@ export interface AppData {
 }
 
 const PAGES = [
-  ['overview', 'Overview'],
+  ['summary', 'Summary'],
+  ['review', 'Review'],
+  ['overview', 'Trends'],
   ['inbox', 'Label'],
   ['transactions', 'Transactions'],
   ['splits', 'Splits'],
@@ -24,18 +28,20 @@ const PAGES = [
 ] as const;
 
 function currentRoute() {
-  return location.hash.replace(/^#\/?/, '') || 'overview';
+  return location.hash.replace(/^#\/?/, '') || 'summary';
 }
 
 export function App() {
   const [route, setRoute] = useState(currentRoute);
   const [summary, setSummary] = useState<Summary | null>(null);
   const [categories, setCategories] = useState<Category[]>([]);
+  const [toReview, setToReview] = useState(0);
 
   const refresh = useCallback(async () => {
-    const [s, c] = await Promise.all([api.summary(), api.categories()]);
+    const [s, c, r] = await Promise.all([api.summary(), api.categories(), api.review()]);
     setSummary(s);
     setCategories(c);
+    setToReview(r.length);
   }, []);
 
   useEffect(() => {
@@ -58,6 +64,7 @@ export function App() {
           <a key={id} href={`#/${id}`} className={page === id ? 'active' : ''}>
             {label}
             {id === 'inbox' && uncategorized > 0 && <span className="badge">{uncategorized}</span>}
+            {id === 'review' && toReview > 0 && <span className="badge">{toReview}</span>}
           </a>
         ))}
       </nav>
@@ -68,7 +75,9 @@ export function App() {
             <p className="sub">No transactions yet. Import a Revolut statement CSV to get started.</p>
             <button className="primary" onClick={() => navigate('import')}>Import a statement</button>
           </div>
-        ) : page === 'inbox' ? <Inbox {...data} />
+        ) : page === 'summary' ? <SummaryPage {...data} />
+          : page === 'review' ? <Review {...data} />
+          : page === 'inbox' ? <Inbox {...data} />
           : page === 'transactions' ? <Transactions {...data} query={new URLSearchParams(query)} />
           : page === 'splits' ? <Splits {...data} />
           : page === 'rules' ? <Rules {...data} />

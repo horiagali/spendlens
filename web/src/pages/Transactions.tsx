@@ -8,7 +8,7 @@ const PAGE = 100;
 export function Transactions({ categories, refresh, summary, query }: AppData & { query: URLSearchParams }) {
   const [filters, setFilters] = useState(() => ({
     month: query.get('month') ?? '', kind: query.get('kind') ?? '', category: query.get('category') ?? '',
-    q: query.get('q') ?? '', merchantKey: query.get('merchantKey') ?? '',
+    q: query.get('q') ?? '', merchantKey: query.get('merchantKey') ?? '', from: query.get('from') ?? '',
   }));
   const [page, setPage] = useState(0);
   const [data, setData] = useState<{ total: number; items: Txn[] } | null>(null);
@@ -44,6 +44,7 @@ export function Transactions({ categories, refresh, summary, query }: AppData & 
           <option value="none">Uncategorized</option>
           {categories.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
         </select>
+        {filters.from && <button onClick={() => set('from', '')}>Since {filters.from} ✕</button>}
         {filters.merchantKey && <button onClick={() => set('merchantKey', '')}>Merchant: {filters.merchantKey} ✕</button>}
         <div className="spacer" />
         <span className="muted small">{data?.total ?? 0} transactions</span>

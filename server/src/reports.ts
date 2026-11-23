@@ -108,3 +108,106 @@ export function compareAround(db: DB, cutoff: string): { before: PeriodSummary; 
     after: summarize(full.filter((m) => m.month > cutoffMonth)),
   };
 }
+
+export interface PeriodItem { id: string; date: string; merchant: string; description: string; amount: number; oneOff: boolean; }
+export interface PeriodGroup {
+  categoryId: number | null;
+  name: string;
+  bucket: Bucket;
+  total: number; // cents: spent (expenses) or received (income), net of refunds and paybacks
+  byMonth: Record<string, number>;
+  items: PeriodItem[]; // biggest first
+}
+export interface PeriodReport {
+  from: string;
+  to: string;
+  months: string[];
+  income: { total: number; byMonth: Record<string, number>; sources: PeriodGroup[] };
+  spending: { total: number; byMonth: Record<string, number>; byBucket: Record<Bucket, number>; categories: PeriodGroup[] };
+}
+
+/**
+ * Everything that came in and went out between two dates, grouped by category with the
+ * transactions behind each total. Counting is the same as in monthlyReport.
+ */
+export function periodReport(db: DB, from: string, to: string | null = null): PeriodReport {
+  const currency = getSetting(db, 'base_currency') ?? 'EUR';
+  const until = to ?? '9999-12-31';
+  const rows = db.prepare(`SELECT t.id, t.date, t.merchant, t.description, t.amount, t.fee, t.kind, t.one_off,
+      t.category_id, c.name AS category, COALESCE(c.bucket, 'lifestyle') AS bucket,
+      COALESCE((SELECT SUM(r.amount) FROM reimbursements r WHERE r.expense_id = t.id), 0) AS reimbursed,
+      COALESCE((SELECT SUM(r.amount) FROM reimbursements r WHERE r.incoming_id = t.id), 0) AS allocated
+    FROM transactions t LEFT JOIN categories c ON c.id = t.category_id
+    WHERE t.currency = ? AND t.date >= ? AND t.date <= ? AND t.kind IN ('spend', 'income', 'reimbursement')`)
+    .all(currency, from, until) as Record<string, any>[];
+
+  const income = new Map<string, PeriodGroup>();
+  const spending = new Map<string, PeriodGroup>();
+  const months = new Set<string>();
+  const add = (groups: Map<string, PeriodGroup>, t: Record<string, any>, value: number, name: string | null) => {
+    const key = String(t.category_id ?? 'none');
+    let g = groups.get(key);
+    if (!g) groups.set(key, (g = { categoryId: t.category_id, name: name ?? 'Uncategorized', bucket: t.bucket, total: 0, byMonth: {}, items: [] }));
+    const month = t.date.slice(0, 7);
+    months.add(month);
+    g.total += value;
+    g.byMonth[month] = (g.byMonth[month] ?? 0) + value;
+    g.items.push({ id: t.id, date: t.date, merchant: t.merchant, description: t.description, amount: value, oneOff: !!t.one_off });
+  };
+  for (const t of rows) {
+    if (t.kind === 'spend') add(spending, t, -t.amount + t.fee - t.reimbursed, t.category);
+    else if (t.kind === 'income') add(income, t, t.amount - t.fee, t.category);
+    else if (t.amount - t.allocated > 0) add(income, { ...t, category_id: null }, t.amount - t.allocated, 'Paybacks not linked to an expense');
+  }
+  const finish = (groups: Map<string, PeriodGroup>) => {
+    const list = [...groups.values()].sort((a, b) => b.total - a.total);
+    for (const g of list) g.items.sort((a, b) => b.amount - a.amount);
+    const byMonth: Record<string, number> = {};
+    for (const g of list) for (const [m, v] of Object.entries(g.byMonth)) byMonth[m] = (byMonth[m] ?? 0) + v;
+    return { list, total: list.reduce((s, g) => s + g.total, 0), byMonth };
+  };
+  const inc = finish(income);
+  const sp = finish(spending);
+  const byBucket: Record<Bucket, number> = { lifestyle: 0, fixed: 0, separate: 0 };
+  for (const g of sp.list) byBucket[g.bucket] += g.total;
+  return {
+    from,
+    to: to ?? (rows.reduce((m, t) => (t.date > m ? t.date : m), from)),
+    months: [...months].sort(),
+    income: { total: inc.total, byMonth: inc.byMonth, sources: inc.list },
+    spending: { total: sp.total, byMonth: sp.byMonth, byBucket, categories: sp.list },
+  };
+}
+
+const BIG_FROM_PERSON = 10000; // €100
+const BIG_UNLABELED = 5000;
+const BIG_PURCHASE = 25000;
+
+/**
+ * Transactions worth a human look: big transfers with people (a payback? a gift? rent?),
+ * big payments without a category, odd income, and big purchases (one-off?).
+ * Anything you changed by hand or marked as reviewed is left out.
+ */
+export function reviewQueue(db: DB, from: string): { id: string; reasons: string[] }[] {
+  const rows = db.prepare(`SELECT t.id, t.amount, t.kind, t.counterparty, t.category_id, t.one_off,
+      c.is_income, COALESCE(c.bucket, 'lifestyle') AS bucket
+    FROM transactions t LEFT JOIN categories c ON c.id = t.category_id
+    WHERE t.date >= ? AND t.reviewed = 0 AND t.kind_source != 'manual' AND COALESCE(t.category_source, '') != 'manual'
+      AND t.kind IN ('spend', 'income', 'reimbursement')
+    ORDER BY t.date DESC`).all(from) as Record<string, any>[];
+  const out: { id: string; reasons: string[] }[] = [];
+  for (const t of rows) {
+    const reasons: string[] = [];
+    const fixedOrApart = t.bucket !== 'lifestyle';
+    if (t.counterparty && t.amount >= BIG_FROM_PERSON && !t.is_income) reasons.push('Big transfer from a person: payback, gift or something else?');
+    if (t.counterparty && t.amount <= -BIG_FROM_PERSON && !fixedOrApart) reasons.push('Big transfer to a person: what was it for?');
+    if (t.kind === 'spend' && t.category_id === null && Math.abs(t.amount) >= BIG_UNLABELED && reasons.length === 0) reasons.push('No category yet');
+    if (t.kind === 'income' && t.category_id === null) reasons.push('Income from an unknown source');
+    if (t.kind === 'income' && t.amount < 0) reasons.push('Negative income (paid back?)');
+    if (t.kind === 'spend' && !t.counterparty && t.amount <= -BIG_PURCHASE && !fixedOrApart && reasons.length === 0) {
+      reasons.push(t.one_off ? 'Big purchase, marked one-off' : 'Big purchase: one-off?');
+    }
+    if (reasons.length) out.push({ id: t.id, reasons });
+  }
+  return out;
+}
