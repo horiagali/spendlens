@@ -101,3 +101,5 @@ tr.dim td { color: var(--text-muted); }
 .split-card { display: grid; grid-template-columns: 1fr auto 1fr auto; gap: 12px; align-items: center; padding: 10px 0; border-bottom: 1px solid var(--grid); }
 .split-card:last-child { border-bottom: 0; }
 tr.clickable:hover td { background: var(--surface-0); }
+.sync { display: flex; align-items: center; gap: 10px; margin-left: 12px; padding-left: 12px; border-left: 1px solid var(--border); }
+.sync button.primary { font-weight: 600; padding: 8px 14px; }

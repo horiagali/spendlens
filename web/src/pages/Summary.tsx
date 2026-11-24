@@ -1,6 +1,7 @@
 import { Fragment, useEffect, useState } from 'react';
 import { api, BUCKET_LABEL, BUCKETS, monthLabel, moneyShort, money, type PeriodGroup, type PeriodItem, type PeriodReport } from '../api.ts';
 import type { AppData } from '../App.tsx';
+import { SyncButton } from '../components/SyncButton.tsx';
 
 type SortBy = 'newest' | 'oldest' | 'biggest' | 'smallest';
 const SORTS: [SortBy, string][] = [['newest', 'Newest first'], ['oldest', 'Oldest first'], ['biggest', 'Biggest first'], ['smallest', 'Smallest first']];
@@ -34,7 +35,7 @@ function monthsCovered(from: string, to: string, months: string[]): number {
 }
 
 /** "What came in, what went out, and what it went to" for a period, e.g. since the start of the academic year. */
-export function Summary({ summary, navigate }: AppData) {
+export function Summary({ summary, navigate, refresh }: AppData) {
   const currency = summary?.baseCurrency ?? 'EUR';
   const [from, setFrom] = useState('');
   const [data, setData] = useState<PeriodReport | null>(null);
@@ -146,6 +147,7 @@ export function Summary({ summary, navigate }: AppData) {
         </div>
         <div className="spacer" />
         <label className="small muted">Since&nbsp;<input type="date" value={from} onChange={(e) => setFrom(e.target.value)} /></label>
+        <SyncButton lastDate={summary?.counts.lastDate ?? null} onSynced={refresh} />
       </div>
 
       <div className="tiles">
