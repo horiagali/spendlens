@@ -29,7 +29,7 @@ export function Inbox({ categories, refresh, summary, navigate }: AppData) {
     <>
       <h1>Label merchants</h1>
       <p className="sub">
-        {items.length === 0 ? 'Everything is labeled. 🎉' : `${items.length} merchants (${txCount} transactions) need a category. Labeling one labels all its transactions, now and in future imports.`}
+        {items.length === 0 ? 'Everything is labeled. 🎉' : `${items.length} merchants (${txCount} transactions) need a category, most recent first. Labeling one labels all its transactions, now and in future imports.`}
       </p>
       {items.length > 0 && (
         <div className="card">

@@ -114,7 +114,7 @@ export function buildApi(db: DB): Router {
   r.get('/api/inbox', () => db.prepare(`SELECT merchant_key AS merchantKey, MAX(merchant) AS merchant, kind,
       COUNT(*) AS count, SUM(amount) AS total, MAX(date) AS lastDate, MAX(description) AS sampleDescription
     FROM transactions WHERE kind IN ('spend', 'income') AND category_id IS NULL
-    GROUP BY merchant_key, kind ORDER BY count DESC, ABS(SUM(amount)) DESC`).all());
+    GROUP BY merchant_key, kind ORDER BY lastDate DESC, count DESC`).all());
 
   r.post('/api/inbox/label', async ({ body }) => {
     const b = await body();
