@@ -29,7 +29,7 @@ merchant('Supermarkets', 'Groceries',
 merchant('Food delivery & chains', 'Eating out',
   '\\b(uber eats|thuisbezorgd|deliveroo|just eat|mcdonald|burger king|kfc|starbucks|subway|domino|new york pizza|febo)\\b');
 merchant('Public transport & rides', 'Transport',
-  '^(ns|ns reizigers|ns internationaal|ns nl|uber|uber trip|bolt|greenwheels|lime|tier|ov-chipkaart|trans link|ret|htm|gvb|arriva|connexxion|qbuzz|atac|flixbus|db vertrieb|sncb)\\b');
+  '^(ns|ns reizigers|ns internationaal|ns nl|uber|uber trip|bolt|greenwheels|lime|tier|ov-chipkaart|tls bv inzake ov-chipkaart|trans link|ret|htm|gvb|arriva|connexxion|qbuzz|atac|flixbus|db vertrieb|sncb)\\b');
 // OVpay: tapping a bank card on Dutch public transport shows up as "NLOV" plus a random token.
 merchant('OVpay public transport', 'Transport', '^nlov[a-z0-9]{10,}$');
 merchant('Airlines & stays', 'Travel',
@@ -43,7 +43,7 @@ merchant('Electronics & games', 'Electronics & games',
 merchant('Drugstores & pharmacies', 'Health', '\\b(kruidvat|etos|apotheek|pharmacy|da drogist|huisarts|tandarts)\\b');
 merchant('Climbing & gyms', 'Sport', '\\b(boulder|klimhal|sportcentrum)');
 merchant('Health insurance, phone, energy & local taxes', 'Bills & insurance',
-  '\\b(zorgverzekeraar|vgz|zilveren kruis|menzis|ohra|youfone|odido|kpn|vodafone|ziggo|lebara|simyo|eneco|vattenfall|essent|belasting groep|waterschap)\\b');
+  '\\b(zorgverzekeraar|vgz|zilveren kruis|menzis|ohra|youfone|odido|kpn|vodafone|ziggo|lebara|simyo|eneco|vattenfall|essent|eteck|belasting groep|waterschap)\\b');
 STARTER_RULES.push({ name: 'Cash withdrawals', category: 'Cash', conditions: [{ field: 'type', op: 'equals', value: 'ATM' }] });
 
 STARTER_RULES.push({ name: 'Salary (memo mentions salaris/salary)', category: 'Salary', kind: 'income',
