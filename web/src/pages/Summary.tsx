@@ -216,7 +216,7 @@ function Groups({ groups, total, m, perMonth, open }: {
   groups: PeriodGroup[]; total: number; m: (c: number) => string; perMonth?: (c: number) => number; open: (g: PeriodGroup) => void;
 }) {
   const [expanded, setExpanded] = useState<string | null>(null);
-  const [sortBy, setSortBy] = useState<SortBy>('biggest');
+  const [sortBy, setSortBy] = useState<SortBy>('newest');
   const [showAll, setShowAll] = useState(false);
   const max = Math.max(...groups.map((g) => g.total), 1);
   return (
