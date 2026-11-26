@@ -4,12 +4,13 @@ import type { AppData } from '../App.tsx';
 import { CategorySelect } from '../components/CategorySelect.tsx';
 
 /**
- * Merchants that still need a category, most frequent first. Labeling a merchant creates a rule,
+ * Merchants that still need a category, most recent first (or most frequent / biggest). Labeling a merchant creates a rule,
  * so every past and future transaction from it is labeled too.
  */
 export function Inbox({ categories, refresh, summary, navigate }: AppData) {
   const [items, setItems] = useState<InboxItem[] | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
+  const [order, setOrder] = useState<'recent' | 'frequent' | 'biggest'>('recent');
   const currency = summary?.baseCurrency ?? 'EUR';
 
   const load = () => api.inbox().then(setItems);
@@ -25,18 +26,29 @@ export function Inbox({ categories, refresh, summary, navigate }: AppData) {
 
   if (!items) return null;
   const txCount = items.reduce((s, i) => s + i.count, 0);
+  const sorted = [...items].sort(order === 'recent' ? (a, b) => b.lastDate.localeCompare(a.lastDate) || b.count - a.count
+    : order === 'frequent' ? (a, b) => b.count - a.count || b.lastDate.localeCompare(a.lastDate)
+    : (a, b) => Math.abs(b.total) - Math.abs(a.total));
   return (
     <>
-      <h1>Label merchants</h1>
+      <div className="row">
+        <h1>Label merchants</h1>
+        <div className="spacer" />
+        <select value={order} onChange={(e) => setOrder(e.target.value as typeof order)} aria-label="Order">
+          <option value="recent">Most recent first</option>
+          <option value="frequent">Most frequent first</option>
+          <option value="biggest">Biggest amount first</option>
+        </select>
+      </div>
       <p className="sub">
-        {items.length === 0 ? 'Everything is labeled. 🎉' : `${items.length} merchants (${txCount} transactions) need a category, most recent first. Labeling one labels all its transactions, now and in future imports.`}
+        {items.length === 0 ? 'Everything is labeled. 🎉' : `${items.length} merchants (${txCount} transactions) need a category. Labeling one labels all its transactions, now and in future imports.`}
       </p>
       {items.length > 0 && (
         <div className="card">
           <table>
             <thead><tr><th>Merchant</th><th className="num">Txns</th><th className="num">Total</th><th>Last</th><th>Category</th><th></th></tr></thead>
             <tbody>
-              {items.map((it) => (
+              {sorted.map((it) => (
                 <tr key={it.merchantKey + it.kind} style={{ opacity: busy === it.merchantKey + it.kind ? 0.4 : 1 }}>
                   <td>
                     <a href={`#/transactions?merchantKey=${encodeURIComponent(it.merchantKey)}`} onClick={(e) => { e.preventDefault(); navigate(`transactions?merchantKey=${encodeURIComponent(it.merchantKey)}`); }}>
